@@ -1,5 +1,6 @@
 [package]
 name = "cordial-netd"
+description = "The privileged half of network groups: creates and removes a namespace, a WireGuard interface and a firewall per group, and nothing else"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,3 +11,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hrd-core = { path = "../hrd-core" }
+hrd-net = { path = "../hrd-net" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "net", "mount", "thread", "std", "event"] }
+sha2 = "0.10"

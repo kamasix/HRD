@@ -33,14 +33,23 @@ pub fn read(input: &[u8]) -> Option<(Tlv<'_>, &[u8])> {
             return None; // indefinite, or longer than any real certificate
         }
         let bytes = input.get(2..2 + n)?;
-        let len = bytes.iter().fold(0usize, |acc, b| (acc << 8) | usize::from(*b));
+        let len = bytes
+            .iter()
+            .fold(0usize, |acc, b| (acc << 8) | usize::from(*b));
         (len, 2 + n)
     };
     let end = header.checked_add(len)?;
     if end > input.len() {
         return None;
     }
-    Some((Tlv { tag, content: &input[header..end], whole: &input[..end] }, &input[end..]))
+    Some((
+        Tlv {
+            tag,
+            content: &input[header..end],
+            whole: &input[..end],
+        },
+        &input[end..],
+    ))
 }
 
 const SEQUENCE: u8 = 0x30;
@@ -103,10 +112,37 @@ pub(crate) mod build {
     pub fn certificate_with(spki: &[u8], cn: &str) -> Vec<u8> {
         let version = tlv(0xa0, &tlv(0x02, &[2]));
         let serial = tlv(0x02, &[1]);
-        let sig_alg = tlv(0x30, &tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]));
-        let name = tlv(0x30, &tlv(0x31, &tlv(0x30, &[tlv(0x06, &[0x55, 0x04, 0x03]), tlv(0x0c, cn.as_bytes())].concat())));
-        let validity = tlv(0x30, &[tlv(0x17, b"240101000000Z"), tlv(0x17, b"340101000000Z")].concat());
-        let tbs = tlv(0x30, &[version, serial, sig_alg.clone(), name.clone(), validity, name, spki.to_vec()].concat());
+        let sig_alg = tlv(
+            0x30,
+            &tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]),
+        );
+        let name = tlv(
+            0x30,
+            &tlv(
+                0x31,
+                &tlv(
+                    0x30,
+                    &[tlv(0x06, &[0x55, 0x04, 0x03]), tlv(0x0c, cn.as_bytes())].concat(),
+                ),
+            ),
+        );
+        let validity = tlv(
+            0x30,
+            &[tlv(0x17, b"240101000000Z"), tlv(0x17, b"340101000000Z")].concat(),
+        );
+        let tbs = tlv(
+            0x30,
+            &[
+                version,
+                serial,
+                sig_alg.clone(),
+                name.clone(),
+                validity,
+                name,
+                spki.to_vec(),
+            ]
+            .concat(),
+        );
         tlv(0x30, &[tbs, sig_alg, tlv(0x03, &[0, 1, 2, 3])].concat())
     }
 }
@@ -117,7 +153,14 @@ mod tests {
 
     #[test]
     fn finds_the_key_in_a_well_formed_certificate() {
-        let spki = build::tlv(0x30, &[build::tlv(0x30, &[0x05, 0x00]), build::tlv(0x03, &[0, 4, 4, 4])].concat());
+        let spki = build::tlv(
+            0x30,
+            &[
+                build::tlv(0x30, &[0x05, 0x00]),
+                build::tlv(0x03, &[0, 4, 4, 4]),
+            ]
+            .concat(),
+        );
         let cert = build::certificate_with(&spki, "hrd-test");
         assert_eq!(subject_public_key_info(&cert), Some(&spki[..]));
     }
@@ -151,8 +194,20 @@ mod tests {
             let _ = subject_public_key_info(&c);
         }
         assert_eq!(subject_public_key_info(&[]), None);
-        assert_eq!(subject_public_key_info(&[0x30, 0x80, 0, 0]), None, "indefinite length");
-        assert_eq!(subject_public_key_info(&[0x30, 0x85, 1, 2, 3, 4, 5]), None, "length field too long");
-        assert_eq!(subject_public_key_info(&[0x30, 0x10, 0x30]), None, "length beyond the input");
+        assert_eq!(
+            subject_public_key_info(&[0x30, 0x80, 0, 0]),
+            None,
+            "indefinite length"
+        );
+        assert_eq!(
+            subject_public_key_info(&[0x30, 0x85, 1, 2, 3, 4, 5]),
+            None,
+            "length field too long"
+        );
+        assert_eq!(
+            subject_public_key_info(&[0x30, 0x10, 0x30]),
+            None,
+            "length beyond the input"
+        );
     }
 }

@@ -234,10 +234,22 @@ dependencies = [
 [[package]]
 name = "cordial-enter"
 version = "0.1.0"
+dependencies = [
+ "rustix",
+]
 
 [[package]]
 name = "cordial-netd"
 version = "0.1.0"
+dependencies = [
+ "hrd-core",
+ "hrd-net",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+]
 
 [[package]]
 name = "cordial-update"

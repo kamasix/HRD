@@ -98,12 +98,22 @@ impl State {
     /// deliberately included: a process that exists but cannot be classified
     /// is exactly the case that must not be forgotten.
     pub fn expects_processes(self) -> bool {
-        matches!(self, State::Starting | State::Joining | State::Connected | State::Unknown)
+        matches!(
+            self,
+            State::Starting | State::Joining | State::Connected | State::Unknown
+        )
     }
 
     /// States from which `instance start` is accepted.
     pub fn can_start(self) -> bool {
-        matches!(self, State::Configured | State::AuthRequired | State::Disconnected | State::Stopped | State::Failed)
+        matches!(
+            self,
+            State::Configured
+                | State::AuthRequired
+                | State::Disconnected
+                | State::Stopped
+                | State::Failed
+        )
     }
 
     /// States that occupy a slot: counted against the group capacity check at
@@ -160,7 +170,9 @@ impl std::str::FromStr for ResourceMode {
             "compatible" => Ok(ResourceMode::Compatible),
             "minimal" => Ok(ResourceMode::Minimal),
             "aggressive" => Ok(ResourceMode::Aggressive),
-            _ => Err(crate::Error::invalid(format!("unknown resource mode {s:?}; expected compatible, minimal or aggressive"))),
+            _ => Err(crate::Error::invalid(format!(
+                "unknown resource mode {s:?}; expected compatible, minimal or aggressive"
+            ))),
         }
     }
 }
@@ -349,7 +361,12 @@ pub struct Registry {
 
 impl Default for Registry {
     fn default() -> Self {
-        Registry { schema: REGISTRY_SCHEMA, accounts: BTreeMap::new(), groups: BTreeMap::new(), networks: BTreeMap::new() }
+        Registry {
+            schema: REGISTRY_SCHEMA,
+            accounts: BTreeMap::new(),
+            groups: BTreeMap::new(),
+            networks: BTreeMap::new(),
+        }
     }
 }
 

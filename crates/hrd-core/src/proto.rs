@@ -36,76 +36,167 @@ pub struct RequestEnvelope {
 #[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
 pub enum Request {
     /// First message of a session; the daemon answers with its version.
-    Hello { client: String, protocol: u32 },
+    Hello {
+        client: String,
+        protocol: u32,
+    },
     DaemonInfo,
     /// Server-side health checks (the parts that need the daemon's view).
     DaemonDoctor,
     /// Ask the daemon to exit. Instances follow `scheduler.on_daemon_stop`
     /// unless `stop_instances` overrides it.
-    Shutdown { stop_instances: Option<bool> },
+    Shutdown {
+        stop_instances: Option<bool>,
+    },
 
     // -- accounts ---------------------------------------------------------
-    AccountAdd { name: AccountName, labels: Vec<String>, note: Option<String>, group: Option<GroupName> },
+    AccountAdd {
+        name: AccountName,
+        labels: Vec<String>,
+        note: Option<String>,
+        group: Option<GroupName>,
+    },
     AccountList,
-    AccountSet { name: AccountName, labels: Option<Vec<String>>, note: Option<String>, mode: Option<ResourceMode> },
+    AccountSet {
+        name: AccountName,
+        labels: Option<Vec<String>>,
+        note: Option<String>,
+        mode: Option<ResourceMode>,
+    },
     /// `confirm` must equal the account name; checked by the daemon so that no
     /// client can skip it.
-    AccountRemove { name: AccountName, confirm: String },
+    AccountRemove {
+        name: AccountName,
+        confirm: String,
+    },
     /// Erase the stored session. Refused while the instance is live.
-    AccountLogout { name: AccountName },
+    AccountLogout {
+        name: AccountName,
+    },
     /// Start an interactive sign-in session for the account and keep it until
     /// it succeeds, is cancelled or times out.
-    LoginStart { name: AccountName },
-    LoginStatus { name: AccountName },
-    LoginCancel { name: AccountName },
+    LoginStart {
+        name: AccountName,
+    },
+    LoginStatus {
+        name: AccountName,
+    },
+    LoginCancel {
+        name: AccountName,
+    },
     /// Metadata only; never contains anything secret.
     AccountExport,
-    AccountImport { accounts: Vec<ExportedAccount>, replace: bool },
+    AccountImport {
+        accounts: Vec<ExportedAccount>,
+        replace: bool,
+    },
 
     // -- groups -----------------------------------------------------------
-    GroupCreate { name: GroupName, network: Option<NetworkName>, capacity: u32, note: Option<String> },
+    GroupCreate {
+        name: GroupName,
+        network: Option<NetworkName>,
+        capacity: u32,
+        note: Option<String>,
+    },
     GroupList,
-    GroupAssign { group: GroupName, accounts: Vec<AccountName>, create_missing: bool },
-    GroupRemove { name: GroupName },
+    GroupAssign {
+        group: GroupName,
+        accounts: Vec<AccountName>,
+        create_missing: bool,
+    },
+    GroupRemove {
+        name: GroupName,
+    },
 
     // -- networks ---------------------------------------------------------
     /// Register the public half of an imported configuration. The private key
     /// goes to the privileged helper, not through here.
-    NetworkRegister { network: Network },
+    NetworkRegister {
+        network: Box<Network>,
+    },
     NetworkList,
-    NetworkRemove { name: NetworkName },
+    NetworkRemove {
+        name: NetworkName,
+    },
     NetworkPlan,
-    NetworkApply { prune: bool },
-    NetworkCheck { name: NetworkName },
-    NetworkSet { name: NetworkName, configured_exit: Option<String>, stun_server: Option<String>, max_clients: Option<u32> },
+    NetworkApply {
+        prune: bool,
+    },
+    NetworkCheck {
+        name: NetworkName,
+    },
+    NetworkSet {
+        name: NetworkName,
+        configured_exit: Option<String>,
+        stun_server: Option<String>,
+        max_clients: Option<u32>,
+    },
 
     // -- instances --------------------------------------------------------
-    InstanceStart { account: AccountName, place_id: PlaceId, group: Option<GroupName>, private_server_code: Option<String>, mode: Option<ResourceMode> },
-    InstanceStop { id: AccountName, force: bool },
-    GroupStart { group: GroupName, place_id: PlaceId, private_server_code: Option<String>, mode: Option<ResourceMode> },
-    StopAll { force: bool },
+    InstanceStart {
+        account: AccountName,
+        place_id: PlaceId,
+        group: Option<GroupName>,
+        private_server_code: Option<String>,
+        mode: Option<ResourceMode>,
+    },
+    InstanceStop {
+        id: AccountName,
+        force: bool,
+    },
+    GroupStart {
+        group: GroupName,
+        place_id: PlaceId,
+        private_server_code: Option<String>,
+        mode: Option<ResourceMode>,
+    },
+    StopAll {
+        force: bool,
+    },
     QueueList,
-    QueueCancel { ids: Vec<AccountName>, all: bool },
+    QueueCancel {
+        ids: Vec<AccountName>,
+        all: bool,
+    },
 
     // -- observation ------------------------------------------------------
-    Status { filter: Filter },
-    Stats { filter: Filter },
-    Logs { id: AccountName, lines: usize, follow: bool },
+    Status {
+        filter: Filter,
+    },
+    Stats {
+        filter: Filter,
+    },
+    Logs {
+        id: AccountName,
+        lines: usize,
+        follow: bool,
+    },
     Subscribe,
 
     // -- runtime store ----------------------------------------------------
     /// File descriptors, one per entry of `files` and in the same order, are
     /// attached to this message.
-    RuntimeImport { files: Vec<ImportFile>, label: Option<String>, make_current: bool },
+    RuntimeImport {
+        files: Vec<ImportFile>,
+        label: Option<String>,
+        make_current: bool,
+    },
     RuntimeList,
-    RuntimeUse { version: String },
-    RuntimeRemove { version: String },
+    RuntimeUse {
+        version: String,
+    },
+    RuntimeRemove {
+        version: String,
+    },
 
     // -- secrets ----------------------------------------------------------
     SecretsStatus,
     /// Creates the keyring if it does not exist (`create: true`) or unlocks it.
     /// The passphrase is held in memory only for the duration of the call.
-    SecretsUnlock { passphrase: String, create: bool },
+    SecretsUnlock {
+        passphrase: String,
+        create: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,12 +229,22 @@ pub struct ResponseEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ResponseBody {
-    Ok { ok: bool, data: serde_json::Value },
-    Err { ok: bool, error: WireError },
+    Ok {
+        ok: bool,
+        data: serde_json::Value,
+    },
+    Err {
+        ok: bool,
+        error: WireError,
+    },
     /// One line of a stream.
-    Event { event: serde_json::Value },
+    Event {
+        event: serde_json::Value,
+    },
     /// End of a stream.
-    End { end: bool },
+    End {
+        end: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,26 +257,40 @@ impl ResponseEnvelope {
     pub fn ok(id: u64, data: impl Serialize) -> Self {
         ResponseEnvelope {
             id,
-            body: ResponseBody::Ok { ok: true, data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null) },
+            body: ResponseBody::Ok {
+                ok: true,
+                data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+            },
         }
     }
 
     pub fn err(id: u64, e: &crate::Error) -> Self {
         ResponseEnvelope {
             id,
-            body: ResponseBody::Err { ok: false, error: WireError { code: e.code().into(), message: e.to_string() } },
+            body: ResponseBody::Err {
+                ok: false,
+                error: WireError {
+                    code: e.code().into(),
+                    message: e.to_string(),
+                },
+            },
         }
     }
 
     pub fn event(id: u64, ev: impl Serialize) -> Self {
         ResponseEnvelope {
             id,
-            body: ResponseBody::Event { event: serde_json::to_value(ev).unwrap_or(serde_json::Value::Null) },
+            body: ResponseBody::Event {
+                event: serde_json::to_value(ev).unwrap_or(serde_json::Value::Null),
+            },
         }
     }
 
     pub fn end(id: u64) -> Self {
-        ResponseEnvelope { id, body: ResponseBody::End { end: true } }
+        ResponseEnvelope {
+            id,
+            body: ResponseBody::End { end: true },
+        }
     }
 }
 
@@ -349,16 +464,31 @@ pub struct KsmView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    State { id: AccountName, from: State, to: State, reason: Option<String>, at: u64 },
-    Log { id: AccountName, line: String },
-    Notice { message: String },
+    State {
+        id: AccountName,
+        from: State,
+        to: State,
+        reason: Option<String>,
+        at: u64,
+    },
+    Log {
+        id: AccountName,
+        line: String,
+    },
+    Notice {
+        message: String,
+    },
 }
 
 /// Encode one protocol line (including the newline).
 pub fn encode_line<T: Serialize>(v: &T) -> crate::Result<Vec<u8>> {
-    let mut b = serde_json::to_vec(v).map_err(|e| crate::Error::Internal(format!("encode: {e}")))?;
+    let mut b =
+        serde_json::to_vec(v).map_err(|e| crate::Error::Internal(format!("encode: {e}")))?;
     if b.len() >= MAX_LINE {
-        return Err(crate::Error::Protocol(format!("message of {} bytes exceeds the {MAX_LINE} byte limit", b.len())));
+        return Err(crate::Error::Protocol(format!(
+            "message of {} bytes exceeds the {MAX_LINE} byte limit",
+            b.len()
+        )));
     }
     b.push(b'\n');
     Ok(b)
@@ -391,15 +521,23 @@ mod tests {
 
     #[test]
     fn a_hostile_name_cannot_get_through_deserialisation() {
-        let bad = r#"{"id":1,"cmd":"instance_stop","args":{"id":"../../etc/passwd","force":false}}"#;
+        let bad =
+            r#"{"id":1,"cmd":"instance_stop","args":{"id":"../../etc/passwd","force":false}}"#;
         assert!(serde_json::from_str::<RequestEnvelope>(bad).is_err());
     }
 
     #[test]
     fn responses_are_distinguishable() {
         let ok = serde_json::to_string(&ResponseEnvelope::ok(1, vec![1, 2])).unwrap();
-        let err = serde_json::to_string(&ResponseEnvelope::err(2, &crate::Error::not_found("x"))).unwrap();
-        let ev = serde_json::to_string(&ResponseEnvelope::event(3, Event::Notice { message: "hi".into() })).unwrap();
+        let err = serde_json::to_string(&ResponseEnvelope::err(2, &crate::Error::not_found("x")))
+            .unwrap();
+        let ev = serde_json::to_string(&ResponseEnvelope::event(
+            3,
+            Event::Notice {
+                message: "hi".into(),
+            },
+        ))
+        .unwrap();
         let end = serde_json::to_string(&ResponseEnvelope::end(3)).unwrap();
         assert!(ok.contains("\"ok\":true"));
         assert!(err.contains("\"code\":\"not_found\""));
@@ -413,7 +551,14 @@ mod tests {
 
     #[test]
     fn oversized_messages_are_refused() {
-        let big = Request::Hello { client: "x".repeat(MAX_LINE), protocol: 1 };
-        assert!(encode_line(&RequestEnvelope { id: 1, request: big }).is_err());
+        let big = Request::Hello {
+            client: "x".repeat(MAX_LINE),
+            protocol: 1,
+        };
+        assert!(encode_line(&RequestEnvelope {
+            id: 1,
+            request: big
+        })
+        .is_err());
     }
 }

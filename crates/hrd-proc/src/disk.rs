@@ -35,7 +35,9 @@ pub fn usage(root: &Path, max_entries: u64) -> Usage {
                 u.truncated = true;
                 return u;
             }
-            let Ok(md) = fs::symlink_metadata(e.path()) else { continue };
+            let Ok(md) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
             let ft = md.file_type();
             if ft.is_symlink() {
                 continue;

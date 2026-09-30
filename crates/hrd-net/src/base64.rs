@@ -5,12 +5,24 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 pub fn encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -74,7 +86,15 @@ mod tests {
 
     #[test]
     fn rfc4648_vectors() {
-        for (raw, enc) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
+        for (raw, enc) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
             assert_eq!(encode(raw.as_bytes()), enc);
             if !enc.is_empty() {
                 assert_eq!(decode(enc).unwrap(), raw.as_bytes());
@@ -84,7 +104,20 @@ mod tests {
 
     #[test]
     fn non_canonical_and_malformed_input_is_refused() {
-        for bad in ["", "Zg=", "Zg", "Zm9v=", "Zh==", "Zm9=", "Z===", "====", "Zm 9v", "Zm9v\n", "Zm9v=Zm9v", "Zm9-"] {
+        for bad in [
+            "",
+            "Zg=",
+            "Zg",
+            "Zm9v=",
+            "Zh==",
+            "Zm9=",
+            "Z===",
+            "====",
+            "Zm 9v",
+            "Zm9v\n",
+            "Zm9v=Zm9v",
+            "Zm9-",
+        ] {
             assert!(decode(bad).is_none(), "{bad:?}");
         }
     }

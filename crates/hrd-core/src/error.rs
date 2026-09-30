@@ -36,7 +36,10 @@ pub enum Error {
 
 impl Error {
     pub fn io(context: impl Into<String>, source: io::Error) -> Self {
-        Error::Io { context: context.into(), source }
+        Error::Io {
+            context: context.into(),
+            source,
+        }
     }
 
     pub fn invalid(msg: impl Into<String>) -> Self {
@@ -128,7 +131,10 @@ impl std::error::Error for Error {
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
-        Error::Io { context: "I/O error".into(), source: e }
+        Error::Io {
+            context: "I/O error".into(),
+            source: e,
+        }
     }
 }
 
@@ -140,7 +146,10 @@ impl From<serde_json::Error> for Error {
 
 impl From<rustix::io::Errno> for Error {
     fn from(e: rustix::io::Errno) -> Self {
-        Error::Io { context: "system call".into(), source: io::Error::from_raw_os_error(e.raw_os_error()) }
+        Error::Io {
+            context: "system call".into(),
+            source: io::Error::from_raw_os_error(e.raw_os_error()),
+        }
     }
 }
 

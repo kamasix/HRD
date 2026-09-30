@@ -110,7 +110,11 @@ pub struct Store {
 /// A version string as the engine reports it: four dot-separated numbers.
 pub fn valid_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
-    v.len() <= 32 && parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()))
+    v.len() <= 32
+        && parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl Store {
@@ -151,7 +155,9 @@ impl Store {
                 return Ok(l);
             }
             if start.elapsed() >= timeout {
-                return Err(Error::conflict("another runtime import, switch or removal is in progress"));
+                return Err(Error::conflict(
+                    "another runtime import, switch or removal is in progress",
+                ));
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -159,14 +165,19 @@ impl Store {
 
     pub fn manifest(&self, version: &str) -> Result<BuildManifest> {
         if !valid_version(version) {
-            return Err(Error::invalid(format!("{version:?} is not an engine version (expected four numbers such as 2.738.0.1397)")));
+            return Err(Error::invalid(format!(
+                "{version:?} is not an engine version (expected four numbers such as 2.738.0.1397)"
+            )));
         }
         let path = self.build_dir(version).join("manifest.json");
         let bytes = fsutil::read_limited(&path, 4 * 1024 * 1024).map_err(|e| match e {
-            Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => Error::not_found(format!("no runtime {version} is installed")),
+            Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+                Error::not_found(format!("no runtime {version} is installed"))
+            }
             other => other,
         })?;
-        serde_json::from_slice(&bytes).map_err(|e| Error::Internal(format!("{}: {e}", path.display())))
+        serde_json::from_slice(&bytes)
+            .map_err(|e| Error::Internal(format!("{}: {e}", path.display())))
     }
 
     /// All installed builds, newest import first.
@@ -179,7 +190,11 @@ impl Store {
             .filter(|n| valid_version(n))
             .filter_map(|n| self.manifest(&n).ok())
             .collect();
-        out.sort_by(|a, b| b.imported_at.cmp(&a.imported_at).then(b.version.cmp(&a.version)));
+        out.sort_by(|a, b| {
+            b.imported_at
+                .cmp(&a.imported_at)
+                .then(b.version.cmp(&a.version))
+        });
         out
     }
 
@@ -198,9 +213,12 @@ impl Store {
     }
 
     fn set_link(&self, name: &str, version: &str) -> Result<()> {
-        let tmp = self.root.join(format!(".{name}.tmp.{}", std::process::id()));
+        let tmp = self
+            .root
+            .join(format!(".{name}.tmp.{}", std::process::id()));
         let _ = fs::remove_file(&tmp);
-        std::os::unix::fs::symlink(Path::new("builds").join(version), &tmp).map_err(|e| Error::io("create link", e))?;
+        std::os::unix::fs::symlink(Path::new("builds").join(version), &tmp)
+            .map_err(|e| Error::io("create link", e))?;
         fs::rename(&tmp, self.link(name)).map_err(|e| {
             let _ = fs::remove_file(&tmp);
             Error::io(format!("replace {name}"), e)
@@ -219,7 +237,9 @@ impl Store {
             self.set_link("previous", &old)?;
         }
         self.set_link("current", version)?;
-        File::open(&self.root).and_then(|d| d.sync_all()).map_err(|e| Error::io("sync store", e))?;
+        File::open(&self.root)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| Error::io("sync store", e))?;
         Ok(())
     }
 
@@ -227,20 +247,27 @@ impl Store {
     pub fn remove(&self, version: &str, in_use: &[String]) -> Result<()> {
         self.manifest(version)?;
         if self.current().as_deref() == Some(version) {
-            return Err(Error::conflict(format!("{version} is the current runtime; switch to another first")));
+            return Err(Error::conflict(format!(
+                "{version} is the current runtime; switch to another first"
+            )));
         }
         if self.previous().as_deref() == Some(version) {
             return Err(Error::conflict(format!("{version} is the previous runtime, kept so you can go back; switch `previous` first")));
         }
         if in_use.iter().any(|v| v == version) {
-            return Err(Error::conflict(format!("{version} is in use by a running instance")));
+            return Err(Error::conflict(format!(
+                "{version} is in use by a running instance"
+            )));
         }
         let dir = self.build_dir(version);
         make_writable(&dir)?;
         // Out of the way first, so a crash mid-delete leaves no half-tree under
         // a valid-looking name.
-        let gone = self.staging_dir().join(format!("removing-{version}-{}", std::process::id()));
-        fs::rename(&dir, &gone).map_err(|e| Error::io(format!("move {} aside", dir.display()), e))?;
+        let gone = self
+            .staging_dir()
+            .join(format!("removing-{version}-{}", std::process::id()));
+        fs::rename(&dir, &gone)
+            .map_err(|e| Error::io(format!("move {} aside", dir.display()), e))?;
         fsutil::remove_dir_all_if_exists(&gone)
     }
 }
@@ -250,13 +277,21 @@ use std::fs::File;
 /// Give the owner write permission throughout a tree, so it can be deleted.
 /// Does not follow symlinks.
 pub fn make_writable(path: &Path) -> Result<()> {
-    let md = fs::symlink_metadata(path).map_err(|e| Error::io(format!("stat {}", path.display()), e))?;
+    let md =
+        fs::symlink_metadata(path).map_err(|e| Error::io(format!("stat {}", path.display()), e))?;
     if md.file_type().is_symlink() {
         return Ok(());
     }
-    fs::set_permissions(path, fs::Permissions::from_mode(md.permissions().mode() | 0o700)).map_err(|e| Error::io(format!("chmod {}", path.display()), e))?;
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(md.permissions().mode() | 0o700),
+    )
+    .map_err(|e| Error::io(format!("chmod {}", path.display()), e))?;
     if md.is_dir() {
-        for e in fs::read_dir(path).map_err(|e| Error::io(format!("read {}", path.display()), e))?.flatten() {
+        for e in fs::read_dir(path)
+            .map_err(|e| Error::io(format!("read {}", path.display()), e))?
+            .flatten()
+        {
             make_writable(&e.path())?;
         }
     }
@@ -267,17 +302,26 @@ pub fn make_writable(path: &Path) -> Result<()> {
 /// (there are none in a build, and a stray one is left alone rather than
 /// chmod'ed through).
 pub fn seal(path: &Path) -> Result<()> {
-    let md = fs::symlink_metadata(path).map_err(|e| Error::io(format!("stat {}", path.display()), e))?;
+    let md =
+        fs::symlink_metadata(path).map_err(|e| Error::io(format!("stat {}", path.display()), e))?;
     if md.file_type().is_symlink() {
-        return Err(Error::Internal(format!("{} is a symbolic link inside a build", path.display())));
+        return Err(Error::Internal(format!(
+            "{} is a symbolic link inside a build",
+            path.display()
+        )));
     }
     if md.is_dir() {
-        for e in fs::read_dir(path).map_err(|e| Error::io(format!("read {}", path.display()), e))?.flatten() {
+        for e in fs::read_dir(path)
+            .map_err(|e| Error::io(format!("read {}", path.display()), e))?
+            .flatten()
+        {
             seal(&e.path())?;
         }
-        fs::set_permissions(path, fs::Permissions::from_mode(DIR_MODE)).map_err(|e| Error::io(format!("chmod {}", path.display()), e))
+        fs::set_permissions(path, fs::Permissions::from_mode(DIR_MODE))
+            .map_err(|e| Error::io(format!("chmod {}", path.display()), e))
     } else {
-        fs::set_permissions(path, fs::Permissions::from_mode(FILE_MODE)).map_err(|e| Error::io(format!("chmod {}", path.display()), e))
+        fs::set_permissions(path, fs::Permissions::from_mode(FILE_MODE))
+            .map_err(|e| Error::io(format!("chmod {}", path.display()), e))
     }
 }
 
@@ -306,10 +350,19 @@ mod tests {
             upstream_commit: UPSTREAM_COMMIT.into(),
             label: None,
             signer_sha256: "ab".repeat(32),
-            engine: FileRecord { path: "engine/libroblox.so".into(), size: 1, sha256: "cd".repeat(32) },
+            engine: FileRecord {
+                path: "engine/libroblox.so".into(),
+                size: 1,
+                sha256: "cd".repeat(32),
+            },
             archives: vec![],
             unused: vec![],
-            assets: AssetsRecord { files: 0, bytes: 0, tree_sha256: String::new(), stamp: String::new() },
+            assets: AssetsRecord {
+                files: 0,
+                bytes: 0,
+                tree_sha256: String::new(),
+                stamp: String::new(),
+            },
             consistency: Consistency::default(),
         };
         fsutil::write_json_atomic(&d.join("manifest.json"), &m, 0o440).unwrap();
@@ -322,7 +375,17 @@ mod tests {
         for ok in ["2.738.0.1397", "2.1.0.1", "10.20.30.40"] {
             assert!(valid_version(ok), "{ok}");
         }
-        for bad in ["", "2.738.0", "2.738.0.1397.1", "a.b.c.d", "2..0.1", "../../etc", "2.738.0.1397/x", "2.738.0.13 97", &"1.".repeat(20)] {
+        for bad in [
+            "",
+            "2.738.0",
+            "2.738.0.1397.1",
+            "a.b.c.d",
+            "2..0.1",
+            "../../etc",
+            "2.738.0.1397/x",
+            "2.738.0.13 97",
+            &"1.".repeat(20),
+        ] {
             assert!(!valid_version(bad), "{bad:?}");
         }
     }
@@ -345,13 +408,22 @@ mod tests {
         assert_eq!(s.previous().as_deref(), Some("2.739.0.1400"));
         assert!(s.use_version("2.000.0.1").is_err());
         let names: Vec<_> = s.list().into_iter().map(|m| m.version).collect();
-        assert_eq!(names, ["2.739.0.1400", "2.738.0.1397"], "newest import first");
+        assert_eq!(
+            names,
+            ["2.739.0.1400", "2.738.0.1397"],
+            "newest import first"
+        );
     }
 
     #[test]
     fn remove_refuses_current_previous_and_in_use_and_can_delete_a_sealed_tree() {
         let s = store("rm");
-        for (v, t) in [("2.1.0.1", 1), ("2.2.0.1", 2), ("2.3.0.1", 3), ("2.4.0.1", 4)] {
+        for (v, t) in [
+            ("2.1.0.1", 1),
+            ("2.2.0.1", 2),
+            ("2.3.0.1", 3),
+            ("2.4.0.1", 4),
+        ] {
             fake_build(&s, v, t);
         }
         s.use_version("2.1.0.1").unwrap();
@@ -370,8 +442,18 @@ mod tests {
         let s = store("seal");
         fake_build(&s, "2.9.0.1", 1);
         let f = s.build_dir("2.9.0.1").join("engine/libroblox.so");
-        assert_eq!(fs::metadata(&f).unwrap().permissions().mode() & 0o777, FILE_MODE);
-        assert_eq!(fs::metadata(s.build_dir("2.9.0.1")).unwrap().permissions().mode() & 0o777, DIR_MODE);
+        assert_eq!(
+            fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            FILE_MODE
+        );
+        assert_eq!(
+            fs::metadata(s.build_dir("2.9.0.1"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            DIR_MODE
+        );
         // root ignores mode bits, so only assert the observable bits above
     }
 

@@ -64,8 +64,13 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
             "--path" => a.paths.push(PathBuf::from(value("--path")?)),
             "--fd" => {
                 let v = value("--fd")?;
-                let (n, name) = v.split_once(':').map(|(n, name)| (n, name.to_string())).unwrap_or((v.as_str(), String::new()));
-                let n: i32 = n.parse().map_err(|_| format!("--fd {v:?}: not a descriptor number"))?;
+                let (n, name) = v
+                    .split_once(':')
+                    .map(|(n, name)| (n, name.to_string()))
+                    .unwrap_or((v.as_str(), String::new()));
+                let n: i32 = n
+                    .parse()
+                    .map_err(|_| format!("--fd {v:?}: not a descriptor number"))?;
                 if n < 3 {
                     return Err("--fd must be 3 or higher".into());
                 }
@@ -91,16 +96,30 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
 }
 
 fn safe_name(s: &str) -> String {
-    let base = Path::new(s).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    base.chars().filter(|c| c.is_ascii_graphic()).take(96).collect()
+    let base = Path::new(s)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    base.chars()
+        .filter(|c| c.is_ascii_graphic())
+        .take(96)
+        .collect()
 }
 
 fn expand_inputs(a: &Args) -> Result<Vec<Input>> {
     let mut out = Vec::new();
     for (n, name) in &a.fds {
-        let f = File::open(format!("/proc/self/fd/{n}")).map_err(|e| Error::io(format!("open inherited descriptor {n}"), e))?;
-        let given = if name.is_empty() { format!("fd{n}") } else { safe_name(name) };
-        out.push(Input { file: f, given_name: given });
+        let f = File::open(format!("/proc/self/fd/{n}"))
+            .map_err(|e| Error::io(format!("open inherited descriptor {n}"), e))?;
+        let given = if name.is_empty() {
+            format!("fd{n}")
+        } else {
+            safe_name(name)
+        };
+        out.push(Input {
+            file: f,
+            given_name: given,
+        });
     }
     for p in &a.paths {
         let md = std::fs::metadata(p).map_err(|e| Error::io(format!("stat {}", p.display()), e))?;
@@ -114,22 +133,36 @@ fn expand_inputs(a: &Args) -> Result<Vec<Input>> {
                 .collect();
             names.sort();
             if names.is_empty() {
-                return Err(Error::invalid(format!("{} holds no .apk files", p.display())));
+                return Err(Error::invalid(format!(
+                    "{} holds no .apk files",
+                    p.display()
+                )));
             }
             for n in names {
-                let f = File::open(&n).map_err(|e| Error::io(format!("open {}", n.display()), e))?;
-                out.push(Input { file: f, given_name: safe_name(&n.to_string_lossy()) });
+                let f =
+                    File::open(&n).map_err(|e| Error::io(format!("open {}", n.display()), e))?;
+                out.push(Input {
+                    file: f,
+                    given_name: safe_name(&n.to_string_lossy()),
+                });
             }
         } else {
             let f = File::open(p).map_err(|e| Error::io(format!("open {}", p.display()), e))?;
-            out.push(Input { file: f, given_name: safe_name(&p.to_string_lossy()) });
+            out.push(Input {
+                file: f,
+                given_name: safe_name(&p.to_string_lossy()),
+            });
         }
     }
     Ok(out)
 }
 
 fn run(a: Args) -> Result<()> {
-    let store = Store::new(a.store.clone().ok_or_else(|| Error::invalid("--store is required"))?);
+    let store = Store::new(
+        a.store
+            .clone()
+            .ok_or_else(|| Error::invalid("--store is required"))?,
+    );
     match a.cmd.as_str() {
         "import" => {
             let inputs = expand_inputs(&a)?;
@@ -139,17 +172,34 @@ fn run(a: Args) -> Result<()> {
             }
             let report = import::run(
                 &store,
-                Request { inputs, label: a.label.clone(), make_current: a.make_current, verifier: &verifier, now: now_unix() },
+                Request {
+                    inputs,
+                    label: a.label.clone(),
+                    make_current: a.make_current,
+                    verifier: &verifier,
+                    now: now_unix(),
+                },
                 &mut |line| eprintln!("progress: {line}"),
             )?;
             if a.json {
-                println!("{}", serde_json::to_string(&report).map_err(|e| Error::Internal(e.to_string()))?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&report).map_err(|e| Error::Internal(e.to_string()))?
+                );
             } else {
                 println!(
                     "{} runtime {}{}",
-                    if report.already_present { "already installed:" } else { "installed:" },
+                    if report.already_present {
+                        "already installed:"
+                    } else {
+                        "installed:"
+                    },
                     report.version,
-                    if report.made_current { " (now current)" } else { "" }
+                    if report.made_current {
+                        " (now current)"
+                    } else {
+                        ""
+                    }
                 );
                 for w in &report.warnings {
                     println!("warning: {w}");
@@ -175,20 +225,32 @@ fn run(a: Args) -> Result<()> {
                     } else {
                         ""
                     };
-                    println!("{:<16} {:<9} {} {}", b.version, mark, hrd_core::time::rfc3339(b.imported_at), if b.is_split() { "split" } else { "monolithic" });
+                    println!(
+                        "{:<16} {:<9} {} {}",
+                        b.version,
+                        mark,
+                        hrd_core::time::rfc3339(b.imported_at),
+                        if b.is_split() { "split" } else { "monolithic" }
+                    );
                 }
             }
             Ok(())
         }
         "use" => {
-            let v = a.positional.first().ok_or_else(|| Error::invalid("use needs a VERSION"))?;
+            let v = a
+                .positional
+                .first()
+                .ok_or_else(|| Error::invalid("use needs a VERSION"))?;
             let _l = store.lock(Duration::from_secs(60))?;
             store.use_version(v)?;
             println!("current runtime is now {v}");
             Ok(())
         }
         "remove" => {
-            let v = a.positional.first().ok_or_else(|| Error::invalid("remove needs a VERSION"))?;
+            let v = a
+                .positional
+                .first()
+                .ok_or_else(|| Error::invalid("remove needs a VERSION"))?;
             let _l = store.lock(Duration::from_secs(60))?;
             store.remove(v, &a.in_use)?;
             println!("removed runtime {v}");
@@ -220,7 +282,9 @@ fn run(a: Args) -> Result<()> {
                 println!("{}", serde_json::Value::Array(results));
             }
             if bad > 0 {
-                return Err(Error::conflict(format!("{bad} runtime(s) failed verification")));
+                return Err(Error::conflict(format!(
+                    "{bad} runtime(s) failed verification"
+                )));
             }
             Ok(())
         }
@@ -245,7 +309,10 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             if json {
-                println!("{}", serde_json::json!({ "error": { "code": e.code(), "message": e.to_string() } }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "error": { "code": e.code(), "message": e.to_string() } })
+                );
             }
             eprintln!("error: {e}");
             ExitCode::from(e.exit_code())

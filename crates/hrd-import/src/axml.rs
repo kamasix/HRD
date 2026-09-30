@@ -36,10 +36,14 @@ impl<'a> R<'a> {
         self.0.get(at).copied()
     }
     fn u16(&self, at: usize) -> Option<u16> {
-        Some(u16::from_le_bytes(self.0.get(at..at.checked_add(2)?)?.try_into().ok()?))
+        Some(u16::from_le_bytes(
+            self.0.get(at..at.checked_add(2)?)?.try_into().ok()?,
+        ))
     }
     fn u32(&self, at: usize) -> Option<u32> {
-        Some(u32::from_le_bytes(self.0.get(at..at.checked_add(4)?)?.try_into().ok()?))
+        Some(u32::from_le_bytes(
+            self.0.get(at..at.checked_add(4)?)?.try_into().ok()?,
+        ))
     }
     fn slice(&self, at: usize, len: usize) -> Option<&'a [u8]> {
         self.0.get(at..at.checked_add(len)?)
@@ -90,16 +94,27 @@ fn read_pool(c: &R<'_>) -> Option<Vec<String>> {
     for i in 0..count {
         let off = c.u32(offsets_at.checked_add(i.checked_mul(4)?)?)? as usize;
         let s = strings_start.checked_add(off)?;
-        out.push(if flags & UTF8_FLAG != 0 { utf8_string(c, s)? } else { utf16_string(c, s)? });
+        out.push(if flags & UTF8_FLAG != 0 {
+            utf8_string(c, s)?
+        } else {
+            utf16_string(c, s)?
+        });
     }
     Some(out)
 }
 
 fn utf16_string(c: &R<'_>, at: usize) -> Option<String> {
     let first = usize::from(c.u16(at)?);
-    let (len, data_at) = if first & 0x8000 != 0 { ((first & 0x7fff) << 16 | usize::from(c.u16(at + 2)?), at + 4) } else { (first, at + 2) };
+    let (len, data_at) = if first & 0x8000 != 0 {
+        ((first & 0x7fff) << 16 | usize::from(c.u16(at + 2)?), at + 4)
+    } else {
+        (first, at + 2)
+    };
     let bytes = c.slice(data_at, len.checked_mul(2)?)?;
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
     Some(String::from_utf16_lossy(&units))
 }
 
@@ -134,20 +149,30 @@ fn read_manifest_element(c: &R<'_>, header: usize, strings: &[String]) -> Option
     }
     let mut info = ManifestInfo::default();
     for i in 0..attr_count {
-        let a = ext.checked_add(attr_start)?.checked_add(i.checked_mul(attr_size)?)?;
+        let a = ext
+            .checked_add(attr_start)?
+            .checked_add(i.checked_mul(attr_size)?)?;
         let name = strings.get(c.u32(a + 4)? as usize)?;
         let raw = c.u32(a + 8)?;
         let data_type = c.u8(a + 15)?;
         let data = c.u32(a + 16)?;
         let string_value = || -> Option<String> {
-            let idx = if raw != NO_INDEX { raw } else if data_type == TYPE_STRING { data } else { return None };
+            let idx = if raw != NO_INDEX {
+                raw
+            } else if data_type == TYPE_STRING {
+                data
+            } else {
+                return None;
+            };
             strings.get(idx as usize).cloned()
         };
         match name.as_str() {
             "package" => info.package = string_value(),
             "split" => info.split = string_value(),
             "configForSplit" => info.config_for_split = string_value(),
-            "versionCode" if matches!(data_type, TYPE_INT_DEC | TYPE_INT_HEX) => info.version_code = Some(data),
+            "versionCode" if matches!(data_type, TYPE_INT_DEC | TYPE_INT_HEX) => {
+                info.version_code = Some(data)
+            }
             _ => {}
         }
     }
@@ -204,7 +229,13 @@ pub(crate) fn build(utf8: bool, package: &str, version_code: u32, split: Option<
     });
     let mut attrs: Vec<[u32; 5]> = vec![
         [NO_INDEX, 1, 4, u32::from(TYPE_STRING) << 24 | 8, 4],
-        [NO_INDEX, 2, NO_INDEX, u32::from(TYPE_INT_DEC) << 24 | 8, version_code],
+        [
+            NO_INDEX,
+            2,
+            NO_INDEX,
+            u32::from(TYPE_INT_DEC) << 24 | 8,
+            version_code,
+        ],
     ];
     if let Some(i) = split_idx {
         attrs.push([NO_INDEX, 3, i, u32::from(TYPE_STRING) << 24 | 8, i]);
@@ -226,7 +257,7 @@ pub(crate) fn build(utf8: bool, package: &str, version_code: u32, split: Option<
         el.extend_from_slice(&a[0].to_le_bytes()); // ns
         el.extend_from_slice(&a[1].to_le_bytes()); // name
         el.extend_from_slice(&a[2].to_le_bytes()); // raw
-        // typed value: size u16 = 8, res0 u8 = 0, type u8, data u32
+                                                   // typed value: size u16 = 8, res0 u8 = 0, type u8, data u32
         el.extend_from_slice(&8u16.to_le_bytes());
         el.push(0);
         el.push((a[3] >> 24) as u8);
@@ -251,7 +282,11 @@ mod tests {
     fn reads_the_four_attributes_from_utf16_and_utf8_pools() {
         for utf8 in [false, true] {
             let m = parse(&build(utf8, "com.roblox.client", 738_001_397, None)).unwrap();
-            assert_eq!(m.package.as_deref(), Some("com.roblox.client"), "utf8={utf8}");
+            assert_eq!(
+                m.package.as_deref(),
+                Some("com.roblox.client"),
+                "utf8={utf8}"
+            );
             assert_eq!(m.version_code, Some(738_001_397));
             assert_eq!(m.split, None);
             let s = parse(&build(utf8, "com.roblox.client", 7, Some("config.x86_64"))).unwrap();
@@ -273,7 +308,10 @@ mod tests {
             }
         }
         assert_eq!(parse(&[]), None);
-        assert_eq!(parse(&[0x03, 0x00, 0x08, 0x00, 0xff, 0xff, 0xff, 0xff]), None);
+        assert_eq!(
+            parse(&[0x03, 0x00, 0x08, 0x00, 0xff, 0xff, 0xff, 0xff]),
+            None
+        );
         let good8 = build(true, "a", 1, None);
         for n in 0..good8.len() {
             let _ = parse(&good8[..n]);
@@ -284,7 +322,16 @@ mod tests {
     fn a_root_element_that_is_not_manifest_is_not_a_manifest() {
         let mut m = build(false, "p", 1, None);
         // rename string 0 ("manifest") to something else of the same length
-        let pos = m.windows(2 * 8).position(|w| w == "manifest".encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>().as_slice()).unwrap();
+        let pos = m
+            .windows(2 * 8)
+            .position(|w| {
+                w == "manifest"
+                    .encode_utf16()
+                    .flat_map(|u| u.to_le_bytes())
+                    .collect::<Vec<u8>>()
+                    .as_slice()
+            })
+            .unwrap();
         m[pos] = b'X';
         assert_eq!(parse(&m), None);
     }

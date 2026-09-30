@@ -12,12 +12,20 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{Error, Result};
 
-fn check(kind: &str, s: &str, max: usize, first: impl Fn(char) -> bool, rest: impl Fn(char) -> bool) -> Result<()> {
+fn check(
+    kind: &str,
+    s: &str,
+    max: usize,
+    first: impl Fn(char) -> bool,
+    rest: impl Fn(char) -> bool,
+) -> Result<()> {
     if s.is_empty() {
         return Err(Error::invalid(format!("{kind} name is empty")));
     }
     if s.len() > max {
-        return Err(Error::invalid(format!("{kind} name {s:?} is longer than {max} characters")));
+        return Err(Error::invalid(format!(
+            "{kind} name {s:?} is longer than {max} characters"
+        )));
     }
     let mut chars = s.chars();
     let c0 = chars.next().unwrap_or('\0');
@@ -28,7 +36,9 @@ fn check(kind: &str, s: &str, max: usize, first: impl Fn(char) -> bool, rest: im
         )));
     }
     if s.ends_with('-') || s.ends_with('_') {
-        return Err(Error::invalid(format!("{kind} name {s:?} must not end with a separator")));
+        return Err(Error::invalid(format!(
+            "{kind} name {s:?} must not end with a separator"
+        )));
     }
     Ok(())
 }
@@ -155,9 +165,14 @@ impl std::str::FromStr for PlaceId {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
         if s.is_empty() || s.len() > 16 || !s.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(Error::invalid(format!("place id {s:?} must be a positive integer")));
+            return Err(Error::invalid(format!(
+                "place id {s:?} must be a positive integer"
+            )));
         }
-        Self::new(s.parse::<u64>().map_err(|_| Error::invalid(format!("place id {s:?} is not a number")))?)
+        Self::new(
+            s.parse::<u64>()
+                .map_err(|_| Error::invalid(format!("place id {s:?} is not a number")))?,
+        )
     }
 }
 
@@ -170,10 +185,14 @@ impl fmt::Display for PlaceId {
 /// A free-form operator label such as `batch-2` or `region:de`.
 pub fn check_label(s: &str) -> Result<()> {
     if s.is_empty() || s.len() > 32 {
-        return Err(Error::invalid(format!("label {s:?} must be 1-32 characters")));
+        return Err(Error::invalid(format!(
+            "label {s:?} must be 1-32 characters"
+        )));
     }
     let ok = s.chars().enumerate().all(|(i, c)| {
-        c.is_ascii_lowercase() || c.is_ascii_digit() || (i > 0 && matches!(c, '-' | '_' | '.' | ':'))
+        c.is_ascii_lowercase()
+            || c.is_ascii_digit()
+            || (i > 0 && matches!(c, '-' | '_' | '.' | ':'))
     });
     if !ok {
         return Err(Error::invalid(format!(
@@ -201,14 +220,47 @@ mod tests {
     #[test]
     fn refuses_anything_that_could_escape_a_path_or_an_argument() {
         for s in [
-            "", ".", "..", "../x", "a/b", "a b", "A", "a\n", "a\0", "-a", "_a", "a-", "a.", "a;b", "a$b", "a`b", "é", "a\\b",
+            "",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            "a b",
+            "A",
+            "a\n",
+            "a\0",
+            "-a",
+            "_a",
+            "a-",
+            "a.",
+            "a;b",
+            "a$b",
+            "a`b",
+            "é",
+            "a\\b",
             "--profile",
         ] {
-            assert!(AccountName::new(s).is_err(), "account {s:?} must be refused");
+            assert!(
+                AccountName::new(s).is_err(),
+                "account {s:?} must be refused"
+            );
         }
-        for s in ["", "1g", "-g", "g_1", "G", "g.1", "g/1", "g-", "a".repeat(25).as_str()] {
+        for s in [
+            "",
+            "1g",
+            "-g",
+            "g_1",
+            "G",
+            "g.1",
+            "g/1",
+            "g-",
+            "a".repeat(25).as_str(),
+        ] {
             assert!(GroupName::new(s).is_err(), "group {s:?} must be refused");
-            assert!(NetworkName::new(s).is_err(), "network {s:?} must be refused");
+            assert!(
+                NetworkName::new(s).is_err(),
+                "network {s:?} must be refused"
+            );
         }
     }
 
@@ -223,7 +275,17 @@ mod tests {
     #[test]
     fn place_ids_are_numbers_only() {
         assert_eq!("920587237".parse::<PlaceId>().unwrap().get(), 920587237);
-        for s in ["", "0", "-1", "12a", "1 2", "1;2", "99999999999999999", "0x10", "+5"] {
+        for s in [
+            "",
+            "0",
+            "-1",
+            "12a",
+            "1 2",
+            "1;2",
+            "99999999999999999",
+            "0x10",
+            "+5",
+        ] {
             assert!(s.parse::<PlaceId>().is_err(), "{s:?}");
         }
     }

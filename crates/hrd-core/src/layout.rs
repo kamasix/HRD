@@ -123,7 +123,10 @@ impl Layout {
     /// The profile directory upstream Cordial derives from `XDG_DATA_HOME`.
     /// Holds the flock the client takes on itself (ADR-012).
     pub fn account_profile(&self, a: &AccountName, profile: &str) -> PathBuf {
-        self.account_data(a).join("cordial").join("profiles").join(profile)
+        self.account_data(a)
+            .join("cordial")
+            .join("profiles")
+            .join(profile)
     }
 
     /// The instance's private `XDG_RUNTIME_DIR`: its own Wayland socket, its own
@@ -221,11 +224,30 @@ mod tests {
         let l = Layout::system();
         let a = AccountName::new("a").unwrap();
         let b = AccountName::new("b").unwrap();
-        let pa = [l.account_data(&a), l.account_config(&a), l.account_cache(&a), l.account_state(&a), l.instance_run(&a), l.instance_log(&a)];
-        let pb = [l.account_data(&b), l.account_config(&b), l.account_cache(&b), l.account_state(&b), l.instance_run(&b), l.instance_log(&b)];
+        let pa = [
+            l.account_data(&a),
+            l.account_config(&a),
+            l.account_cache(&a),
+            l.account_state(&a),
+            l.instance_run(&a),
+            l.instance_log(&a),
+        ];
+        let pb = [
+            l.account_data(&b),
+            l.account_config(&b),
+            l.account_cache(&b),
+            l.account_state(&b),
+            l.instance_run(&b),
+            l.instance_log(&b),
+        ];
         for x in &pa {
             for y in &pb {
-                assert!(!x.starts_with(y) && !y.starts_with(x), "{} overlaps {}", x.display(), y.display());
+                assert!(
+                    !x.starts_with(y) && !y.starts_with(x),
+                    "{} overlaps {}",
+                    x.display(),
+                    y.display()
+                );
             }
         }
     }

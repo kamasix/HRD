@@ -11,4 +11,6 @@ pub mod base64;
 pub mod gateway;
 pub mod ipnet;
 pub mod plan;
+pub mod proto;
+pub mod stun;
 pub mod wg;

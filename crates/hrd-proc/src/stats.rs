@@ -62,7 +62,10 @@ pub fn sample(pid: u32, with_smaps: bool) -> Option<ProcSample> {
         pid,
         class: classify(&exe),
         start_ticks: stat.start_ticks,
-        threads: status.as_ref().and_then(|s| s.threads).unwrap_or(stat.num_threads),
+        threads: status
+            .as_ref()
+            .and_then(|s| s.threads)
+            .unwrap_or(stat.num_threads),
         cpu_ticks: stat.cpu_ticks(),
         rss: status.as_ref().and_then(|s| s.vm_rss).or(rss_smaps),
         pss,
@@ -91,14 +94,23 @@ pub struct CpuWindow {
 
 impl CpuWindow {
     pub fn new() -> Self {
-        CpuWindow { tck: procfs::clock_ticks_per_second(), ..Default::default() }
+        CpuWindow {
+            tck: procfs::clock_ticks_per_second(),
+            ..Default::default()
+        }
     }
 
     pub fn begin_round(&mut self) {
         self.round += 1;
     }
 
-    pub fn percent(&mut self, pid: u32, start_ticks: u64, cpu_ticks: u64, now_ms: u64) -> Option<f64> {
+    pub fn percent(
+        &mut self,
+        pid: u32,
+        start_ticks: u64,
+        cpu_ticks: u64,
+        now_ms: u64,
+    ) -> Option<f64> {
         let key = (pid, start_ticks);
         self.last_seen.insert(key, self.round);
         let out = match self.prev.get(&key) {
@@ -219,7 +231,17 @@ mod tests {
     #[test]
     fn totals_stay_unmeasured_until_something_measures() {
         let mut t = ClassStats::default();
-        let s = ProcSample { pid: 1, class: Class::Engine, start_ticks: 1, threads: 4, cpu_ticks: 0, rss: Some(100), pss: None, uss: None, swap: None };
+        let s = ProcSample {
+            pid: 1,
+            class: Class::Engine,
+            start_ticks: 1,
+            threads: 4,
+            cpu_ticks: 0,
+            rss: Some(100),
+            pss: None,
+            uss: None,
+            swap: None,
+        };
         add(&mut t, &s, None);
         assert_eq!(t.rss_bytes, Some(100));
         assert_eq!(t.pss_bytes, None, "no PSS sample must not print as zero");
@@ -238,7 +260,10 @@ mod tests {
         assert!(s.rss.unwrap() > 0);
         assert!(s.threads >= 1);
         if let (Some(pss), Some(uss), Some(rss)) = (s.pss, s.uss, s.rss) {
-            assert!(uss <= pss + 4096 && pss <= rss + 4096, "uss {uss} <= pss {pss} <= rss {rss}");
+            assert!(
+                uss <= pss + 4096 && pss <= rss + 4096,
+                "uss {uss} <= pss {pss} <= rss {rss}"
+            );
         }
     }
 }

@@ -83,7 +83,8 @@ impl PinnedVerifier {
 
 impl Verifier for PinnedVerifier {
     fn fingerprint(&self, path: &Path) -> std::result::Result<String, String> {
-        let signer = cordial_update::apk_signature::verify_signed_by(path, &self.trusted).map_err(|r| r.to_string())?;
+        let signer = cordial_update::apk_signature::verify_signed_by(path, &self.trusted)
+            .map_err(|r| r.to_string())?;
         binding::check(path).map_err(|e| e.to_string())?;
         Ok(signer.certificate_sha256)
     }
@@ -149,11 +150,19 @@ struct Archive {
 
 /// Which of `lib/*/libroblox.so` an archive holds, for a useful refusal.
 fn other_abis(path: &Path) -> Vec<String> {
-    let Ok(f) = File::open(path) else { return vec![] };
-    let Ok(z) = zip::ZipArchive::new(std::io::BufReader::new(f)) else { return vec![] };
+    let Ok(f) = File::open(path) else {
+        return vec![];
+    };
+    let Ok(z) = zip::ZipArchive::new(std::io::BufReader::new(f)) else {
+        return vec![];
+    };
     let mut v: Vec<String> = z
         .file_names()
-        .filter_map(|n| n.strip_prefix("lib/")?.strip_suffix("/libroblox.so").map(String::from))
+        .filter_map(|n| {
+            n.strip_prefix("lib/")?
+                .strip_suffix("/libroblox.so")
+                .map(String::from)
+        })
         .collect();
     v.sort();
     v
@@ -170,7 +179,8 @@ fn read_manifest_entry(path: &Path) -> Option<ManifestInfo> {
 
 fn zip_shape(path: &Path) -> Result<(bool, bool)> {
     let f = File::open(path).map_err(|e| Error::io(format!("open {}", path.display()), e))?;
-    let z = zip::ZipArchive::new(std::io::BufReader::new(f)).map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let z = zip::ZipArchive::new(std::io::BufReader::new(f))
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
     let mut manifest = false;
     let mut assets = false;
     for n in z.file_names() {
@@ -192,14 +202,22 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         return Err(refuse("no input files"));
     }
     if req.inputs.len() > MAX_INPUTS {
-        return Err(refuse(format!("{} input files; at most {MAX_INPUTS} are accepted", req.inputs.len())));
+        return Err(refuse(format!(
+            "{} input files; at most {MAX_INPUTS} are accepted",
+            req.inputs.len()
+        )));
     }
     store.ensure()?;
     progress("waiting for the runtime store lock");
     let _lock = store.lock(Duration::from_secs(600))?;
 
     // ---- space ----------------------------------------------------------
-    let declared: u64 = req.inputs.iter().filter_map(|i| i.file.metadata().ok()).map(|m| m.len()).sum();
+    let declared: u64 = req
+        .inputs
+        .iter()
+        .filter_map(|i| i.file.metadata().ok())
+        .map(|m| m.len())
+        .sum();
     let need = declared.saturating_mul(3).saturating_add(512 * 1024 * 1024);
     let free = stage::free_bytes(store.root())?;
     if free < need {
@@ -221,7 +239,10 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
 
     let mut archives: Vec<Archive> = Vec::new();
     for (i, mut input) in req.inputs.into_iter().enumerate() {
-        progress(&format!("copying {} (private copy, hashing)", input.given_name));
+        progress(&format!(
+            "copying {} (private copy, hashing)",
+            input.given_name
+        ));
         let dest = scratch.join(format!("{i}.apk"));
         let staged = stage::copy_hashing(&mut input.file, &dest, stage::MAX_INPUT)?;
         drop(input.file);
@@ -237,7 +258,11 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         });
     }
     for (i, a) in archives.iter().enumerate() {
-        if archives.iter().skip(i + 1).any(|b| b.staged.sha256 == a.staged.sha256) {
+        if archives
+            .iter()
+            .skip(i + 1)
+            .any(|b| b.staged.sha256 == a.staged.sha256)
+        {
             return Err(refuse(format!("{} was given twice", a.given)));
         }
     }
@@ -246,11 +271,20 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
     let mut warnings = Vec::new();
     for a in archives.iter_mut() {
         progress(&format!("checking {}", a.given));
-        apk::inspect(&a.path, Limits::default()).map_err(|r| refuse(format!("{}: {r}", a.given)))?;
-        a.fingerprint = req.verifier.fingerprint(&a.path).map_err(|why| refuse(format!("{}: {why}", a.given)))?;
-        a.holds_engine = apk::holds(&a.path, LIBRARY_IN_APK).map_err(|r| refuse(format!("{}: {r}", a.given)))?;
+        apk::inspect(&a.path, Limits::default())
+            .map_err(|r| refuse(format!("{}: {r}", a.given)))?;
+        a.fingerprint = req
+            .verifier
+            .fingerprint(&a.path)
+            .map_err(|why| refuse(format!("{}: {why}", a.given)))?;
+        a.holds_engine =
+            apk::holds(&a.path, LIBRARY_IN_APK).map_err(|r| refuse(format!("{}: {r}", a.given)))?;
         (a.has_manifest, a.has_assets) = zip_shape(&a.path)?;
-        a.manifest = if a.has_manifest { read_manifest_entry(&a.path) } else { None };
+        a.manifest = if a.has_manifest {
+            read_manifest_entry(&a.path)
+        } else {
+            None
+        };
     }
 
     let signer = archives[0].fingerprint.clone();
@@ -261,38 +295,58 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         )));
     }
 
-    let engine_holders: Vec<usize> = (0..archives.len()).filter(|&i| archives[i].holds_engine).collect();
+    let engine_holders: Vec<usize> = (0..archives.len())
+        .filter(|&i| archives[i].holds_engine)
+        .collect();
     let engine_idx = match engine_holders.as_slice() {
         [i] => *i,
         [] => {
-            let mut why = format!("none of the archives holds {LIBRARY_IN_APK}, the engine for {HOST_ABI}.");
+            let mut why =
+                format!("none of the archives holds {LIBRARY_IN_APK}, the engine for {HOST_ABI}.");
             let abis: Vec<String> = archives.iter().flat_map(|a| other_abis(&a.path)).collect();
             if !abis.is_empty() {
                 why.push_str(&format!(" They do hold the engine for: {}. This build of the manager targets {HOST_ABI}; import the matching split.", abis.join(", ")));
             } else {
-                why.push_str(" On a split build the engine is in split_config.x86_64.apk; include it.");
+                why.push_str(
+                    " On a split build the engine is in split_config.x86_64.apk; include it.",
+                );
             }
             return Err(refuse(why));
         }
         many => {
             let names: Vec<&str> = many.iter().map(|&i| archives[i].given.as_str()).collect();
-            return Err(refuse(format!("more than one archive holds the engine ({}); import one build at a time", names.join(", "))));
+            return Err(refuse(format!(
+                "more than one archive holds the engine ({}); import one build at a time",
+                names.join(", ")
+            )));
         }
     };
-    let asset_holders: Vec<usize> = (0..archives.len()).filter(|&i| archives[i].has_manifest && archives[i].has_assets).collect();
-    let (base_idx, monolithic) = if asset_holders.contains(&engine_idx) && asset_holders.len() == 1 {
+    let asset_holders: Vec<usize> = (0..archives.len())
+        .filter(|&i| archives[i].has_manifest && archives[i].has_assets)
+        .collect();
+    let (base_idx, monolithic) = if asset_holders.contains(&engine_idx) && asset_holders.len() == 1
+    {
         (engine_idx, true)
     } else if asset_holders.len() == 1 {
         (asset_holders[0], false)
     } else if asset_holders.is_empty() {
         return Err(refuse("none of the archives holds both AndroidManifest.xml and assets/: the base APK is missing"));
     } else {
-        let names: Vec<&str> = asset_holders.iter().map(|&i| archives[i].given.as_str()).collect();
-        return Err(refuse(format!("more than one archive looks like a base APK ({}); import one build at a time", names.join(", "))));
+        let names: Vec<&str> = asset_holders
+            .iter()
+            .map(|&i| archives[i].given.as_str())
+            .collect();
+        return Err(refuse(format!(
+            "more than one archive looks like a base APK ({}); import one build at a time",
+            names.join(", ")
+        )));
     };
 
     // ---- does the set belong together -----------------------------------
-    let mut consistency = Consistency { status: "checked".into(), ..Default::default() };
+    let mut consistency = Consistency {
+        status: "checked".into(),
+        ..Default::default()
+    };
     match archives[base_idx].manifest.clone() {
         None => {
             consistency.status = "unchecked".into();
@@ -303,11 +357,15 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
             consistency.version_code = base.version_code;
             if let Some(p) = &base.package {
                 if p != ROBLOX_PACKAGE {
-                    return Err(refuse(format!("the base APK declares package {p:?}, not {ROBLOX_PACKAGE:?}")));
+                    return Err(refuse(format!(
+                        "the base APK declares package {p:?}, not {ROBLOX_PACKAGE:?}"
+                    )));
                 }
             } else {
                 consistency.status = "unchecked".into();
-                consistency.notes.push("the base APK's manifest has no package attribute".into());
+                consistency
+                    .notes
+                    .push("the base APK's manifest has no package attribute".into());
             }
             if !monolithic {
                 match archives[engine_idx].manifest.clone() {
@@ -331,12 +389,17 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
                             (Some(_), Some(_)) => {}
                             _ => {
                                 consistency.status = "unchecked".into();
-                                consistency.notes.push("a version code was missing; base and split were not compared".into());
+                                consistency.notes.push(
+                                    "a version code was missing; base and split were not compared"
+                                        .into(),
+                                );
                             }
                         }
                         if let Some(s) = &split.split {
                             if !s.contains("x86_64") && HOST_ABI == "x86_64" {
-                                return Err(refuse(format!("the engine split is named {s:?}, which is not for x86_64")));
+                                return Err(refuse(format!(
+                                    "the engine split is named {s:?}, which is not for x86_64"
+                                )));
                             }
                         }
                     }
@@ -354,23 +417,31 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
     progress("extracting the engine");
     let engine_dir = root.join("engine");
     fsutil::ensure_private_dir(&engine_dir, 0o750)?;
-    let engine_path = apk::extract(&archives[engine_idx].path, LIBRARY_IN_APK, &engine_dir).map_err(|r| refuse(format!("extracting the engine: {r}")))?;
+    let engine_path = apk::extract(&archives[engine_idx].path, LIBRARY_IN_APK, &engine_dir)
+        .map_err(|r| refuse(format!("extracting the engine: {r}")))?;
     let engine = stage::hash_file(&engine_path)?;
     let version = cordial_update::engine::version_of(&engine_path)
         .ok_or_else(|| refuse("could not read the engine's version out of libroblox.so; refusing to file a build under a guessed name"))?;
     if !valid_version(&version) {
-        return Err(refuse(format!("the engine reports version {version:?}, which is not four numbers")));
+        return Err(refuse(format!(
+            "the engine reports version {version:?}, which is not four numbers"
+        )));
     }
     // Write upstream's cache of the answer now, while the directory is ours, so
     // that every client finds it and none rescans 118 MB.
     match cordial_update::engine::installed_version(&engine_dir) {
         Some(v) if v == version => {}
-        other => return Err(Error::Internal(format!("upstream's engine-version cache disagrees with the scan: {other:?} vs {version:?}"))),
+        other => {
+            return Err(Error::Internal(format!(
+                "upstream's engine-version cache disagrees with the scan: {other:?} vs {version:?}"
+            )))
+        }
     }
 
     progress("extracting assets");
     let assets_dir = root.join("assets");
-    let (assets_files, assets_bytes, tree_sha256) = extract_assets(&archives[base_idx].path, &assets_dir)?;
+    let (assets_files, assets_bytes, tree_sha256) =
+        extract_assets(&archives[base_idx].path, &assets_dir)?;
 
     // ---- place archives ---------------------------------------------------
     let apk_dir = root.join("apk");
@@ -378,7 +449,8 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
     let mut records = Vec::new();
     let split_name = cordial_update::install::SPLIT_APK;
     let base_final = apk_dir.join("base.apk");
-    fs::rename(&archives[base_idx].path, &base_final).map_err(|e| Error::io("place base.apk", e))?;
+    fs::rename(&archives[base_idx].path, &base_final)
+        .map_err(|e| Error::io("place base.apk", e))?;
     records.push(ArchiveRecord {
         role: if monolithic { "monolithic" } else { "base" }.into(),
         stored_as: "apk/base.apk".into(),
@@ -387,7 +459,8 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         sha256: archives[base_idx].staged.sha256.clone(),
     });
     if !monolithic {
-        fs::rename(&archives[engine_idx].path, apk_dir.join(split_name)).map_err(|e| Error::io("place the engine split", e))?;
+        fs::rename(&archives[engine_idx].path, apk_dir.join(split_name))
+            .map_err(|e| Error::io("place the engine split", e))?;
         records.push(ArchiveRecord {
             role: "engine".into(),
             stored_as: format!("apk/{split_name}"),
@@ -400,22 +473,33 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         .iter()
         .enumerate()
         .filter(|(i, _)| *i != base_idx && *i != engine_idx)
-        .map(|(_, a)| FileRecord { path: a.given.clone(), size: a.staged.size, sha256: a.staged.sha256.clone() })
+        .map(|(_, a)| FileRecord {
+            path: a.given.clone(),
+            size: a.staged.size,
+            sha256: a.staged.sha256.clone(),
+        })
         .collect();
 
     // ---- stamp what cordial-run will compare ---------------------------------
     // The stamp names the APK by the path `cordial-run` will be given, which is
     // the final one, so it is built from the staged file's size and mtime and
     // the path it is about to have.
-    let canonical_store = fs::canonicalize(store.root()).map_err(|e| Error::io("resolve the store path", e))?;
+    let canonical_store =
+        fs::canonicalize(store.root()).map_err(|e| Error::io("resolve the store path", e))?;
     let final_dir = canonical_store.join("builds").join(&version);
     let final_apk = final_dir.join("apk/base.apk");
     let stamp = {
         let md = fs::metadata(&base_final).map_err(|e| Error::io("stat base.apk", e))?;
-        let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+        let mtime = md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         format!("{} {} {}", md.len(), mtime, final_apk.display())
     };
-    fs::write(assets_dir.join(cordial_update::cache::STAMP), &stamp).map_err(|e| Error::io("write the assets stamp", e))?;
+    fs::write(assets_dir.join(cordial_update::cache::STAMP), &stamp)
+        .map_err(|e| Error::io("write the assets stamp", e))?;
 
     // ---- provenance --------------------------------------------------------
     let manifest = BuildManifest {
@@ -427,10 +511,19 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         upstream_commit: UPSTREAM_COMMIT.into(),
         label: req.label.clone(),
         signer_sha256: signer.clone(),
-        engine: FileRecord { path: "engine/libroblox.so".into(), size: engine.size, sha256: engine.sha256.clone() },
+        engine: FileRecord {
+            path: "engine/libroblox.so".into(),
+            size: engine.size,
+            sha256: engine.sha256.clone(),
+        },
         archives: records.clone(),
         unused: unused.clone(),
-        assets: AssetsRecord { files: assets_files, bytes: assets_bytes, tree_sha256, stamp },
+        assets: AssetsRecord {
+            files: assets_files,
+            bytes: assets_bytes,
+            tree_sha256,
+            stamp,
+        },
         consistency: consistency.clone(),
     };
     fsutil::write_json_atomic(&root.join("manifest.json"), &manifest, 0o640)?;
@@ -439,10 +532,14 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
     // Scratch copies go first; what is left is the build.
     let _ = fs::remove_dir_all(&scratch);
     progress("sealing and publishing");
-    for entry in fs::read_dir(&root).map_err(|e| Error::io("read the staged build", e))?.flatten() {
+    for entry in fs::read_dir(&root)
+        .map_err(|e| Error::io("read the staged build", e))?
+        .flatten()
+    {
         seal(&entry.path())?;
     }
-    rustix::fs::syncfs(File::open(&root).map_err(|e| Error::io("open the staged build", e))?).map_err(|e| Error::io("sync", std::io::Error::from_raw_os_error(e.raw_os_error())))?;
+    rustix::fs::syncfs(File::open(&root).map_err(|e| Error::io("open the staged build", e))?)
+        .map_err(|e| Error::io("sync", std::io::Error::from_raw_os_error(e.raw_os_error())))?;
 
     let target = store.build_dir(&version);
     let mut already = false;
@@ -459,15 +556,25 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
         }
     }
     if !already {
-        fs::rename(&root, &target).map_err(|e| Error::io(format!("publish {}", target.display()), e))?;
+        fs::rename(&root, &target)
+            .map_err(|e| Error::io(format!("publish {}", target.display()), e))?;
         // The top of the build stays writable until now because a directory
         // cannot be renamed into another parent without write permission on it.
-        fs::set_permissions(&target, std::os::unix::fs::PermissionsExt::from_mode(DIR_MODE)).map_err(|e| Error::io("seal the build", e))?;
-        File::open(store.builds_dir()).and_then(|d| d.sync_all()).map_err(|e| Error::io("sync builds/", e))?;
+        fs::set_permissions(
+            &target,
+            std::os::unix::fs::PermissionsExt::from_mode(DIR_MODE),
+        )
+        .map_err(|e| Error::io("seal the build", e))?;
+        File::open(store.builds_dir())
+            .and_then(|d| d.sync_all())
+            .map_err(|e| Error::io("sync builds/", e))?;
 
-        let asset_ok = cordial_update::cache::is_current(&target.join("assets"), &target.join("apk/base.apk"));
+        let asset_ok =
+            cordial_update::cache::is_current(&target.join("assets"), &target.join("apk/base.apk"));
         let via_canonical = cordial_update::cache::is_current(&target.join("assets"), &final_apk);
-        let version_ok = cordial_update::engine::installed_version(&target.join("engine")).as_deref() == Some(version.as_str());
+        let version_ok = cordial_update::engine::installed_version(&target.join("engine"))
+            .as_deref()
+            == Some(version.as_str());
         if !via_canonical || !version_ok {
             // Take it back: nothing has started on it.
             let back = store.staging_dir().join(format!("unpublished-{tag}"));
@@ -509,18 +616,29 @@ pub fn run(store: &Store, req: Request<'_>, progress: &mut dyn FnMut(&str)) -> R
 fn extract_assets(apk: &Path, dest: &Path) -> Result<(u64, u64, String)> {
     fsutil::ensure_private_dir(dest, 0o750)?;
     let f = File::open(apk).map_err(|e| Error::io(format!("open {}", apk.display()), e))?;
-    let mut z = zip::ZipArchive::new(std::io::BufReader::new(f)).map_err(|e| refuse(format!("{}: {e}", apk.display())))?;
+    let mut z = zip::ZipArchive::new(std::io::BufReader::new(f))
+        .map_err(|e| refuse(format!("{}: {e}", apk.display())))?;
     let mut listing: Vec<(String, u64, String)> = Vec::new();
     let (mut files, mut total) = (0u64, 0u64);
     for i in 0..z.len() {
-        let entry = z.by_index(i).map_err(|e| refuse(format!("entry {i}: {e}")))?;
-        let Some(name) = entry.enclosed_name() else { continue };
-        let Ok(rel) = name.strip_prefix("assets") else { continue };
+        let entry = z
+            .by_index(i)
+            .map_err(|e| refuse(format!("entry {i}: {e}")))?;
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
+        let Ok(rel) = name.strip_prefix("assets") else {
+            continue;
+        };
         if entry.is_dir() || rel.as_os_str().is_empty() {
             continue;
         }
         if entry.size() > MAX_ASSET_ENTRY {
-            return Err(refuse(format!("asset {} is {} bytes, more than the {MAX_ASSET_ENTRY} byte limit", rel.display(), entry.size())));
+            return Err(refuse(format!(
+                "asset {} is {} bytes, more than the {MAX_ASSET_ENTRY} byte limit",
+                rel.display(),
+                entry.size()
+            )));
         }
         let out = dest.join(rel);
         if let Some(parent) = out.parent() {
@@ -535,28 +653,48 @@ fn extract_assets(apk: &Path, dest: &Path) -> Result<(u64, u64, String)> {
                 .mode(0o640)
                 .custom_flags((OFlags::NOFOLLOW | OFlags::CLOEXEC).bits() as i32)
                 .open(&out)
-                .map_err(|e| Error::io(format!("create {} (a duplicate entry name would fail here)", out.display()), e))?;
+                .map_err(|e| {
+                    Error::io(
+                        format!(
+                            "create {} (a duplicate entry name would fail here)",
+                            out.display()
+                        ),
+                        e,
+                    )
+                })?;
             let mut reader = entry.take(MAX_ASSET_ENTRY + 1);
             let mut buf = vec![0u8; 256 * 1024];
             loop {
-                let n = reader.read(&mut buf).map_err(|e| Error::io(format!("inflate {}", rel.display()), e))?;
+                let n = reader
+                    .read(&mut buf)
+                    .map_err(|e| Error::io(format!("inflate {}", rel.display()), e))?;
                 if n == 0 {
                     break;
                 }
                 written += n as u64;
                 if written > MAX_ASSET_ENTRY {
-                    return Err(refuse(format!("asset {} inflates past {MAX_ASSET_ENTRY} bytes", rel.display())));
+                    return Err(refuse(format!(
+                        "asset {} inflates past {MAX_ASSET_ENTRY} bytes",
+                        rel.display()
+                    )));
                 }
                 hasher.update(&buf[..n]);
-                file.write_all(&buf[..n]).map_err(|e| Error::io(format!("write {}", out.display()), e))?;
+                file.write_all(&buf[..n])
+                    .map_err(|e| Error::io(format!("write {}", out.display()), e))?;
             }
         }
         total += written;
         if total > MAX_ASSET_TOTAL {
-            return Err(refuse(format!("assets inflate past {MAX_ASSET_TOTAL} bytes in total")));
+            return Err(refuse(format!(
+                "assets inflate past {MAX_ASSET_TOTAL} bytes in total"
+            )));
         }
         files += 1;
-        listing.push((rel.to_string_lossy().into_owned(), written, hex(&hasher.finalize())));
+        listing.push((
+            rel.to_string_lossy().into_owned(),
+            written,
+            hex(&hasher.finalize()),
+        ));
     }
     listing.sort();
     let mut tree = Sha256::new();
@@ -575,19 +713,32 @@ fn extract_assets(apk: &Path, dest: &Path) -> Result<(u64, u64, String)> {
 /// does not follow a symlink. The names are already `enclosed_name`d; this is
 /// the second, independent reason a hostile name cannot write elsewhere.
 fn create_dirs_under(root: &Path, dir: &Path) -> Result<()> {
-    let rel = dir.strip_prefix(root).map_err(|_| Error::Internal("asset directory outside the staging root".into()))?;
+    let rel = dir
+        .strip_prefix(root)
+        .map_err(|_| Error::Internal("asset directory outside the staging root".into()))?;
     let mut cur = root.to_path_buf();
     for comp in rel.components() {
         match comp {
             std::path::Component::Normal(c) => cur.push(c),
-            _ => return Err(refuse("asset path has a component that is not a plain name")),
+            _ => {
+                return Err(refuse(
+                    "asset path has a component that is not a plain name",
+                ))
+            }
         }
         match fs::symlink_metadata(&cur) {
             Ok(m) if m.is_dir() => {}
-            Ok(_) => return Err(refuse(format!("{} exists and is not a directory", cur.display()))),
+            Ok(_) => {
+                return Err(refuse(format!(
+                    "{} exists and is not a directory",
+                    cur.display()
+                )))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&cur).map_err(|e| Error::io(format!("create {}", cur.display()), e))?;
-                fs::set_permissions(&cur, std::os::unix::fs::PermissionsExt::from_mode(0o750)).map_err(|e| Error::io("chmod", e))?;
+                fs::create_dir(&cur)
+                    .map_err(|e| Error::io(format!("create {}", cur.display()), e))?;
+                fs::set_permissions(&cur, std::os::unix::fs::PermissionsExt::from_mode(0o750))
+                    .map_err(|e| Error::io("chmod", e))?;
             }
             Err(e) => return Err(Error::io(format!("stat {}", cur.display()), e)),
         }
@@ -617,12 +768,19 @@ pub fn verify_build(store: &Store, version: &str) -> Result<Vec<String>> {
         problems.push("the assets stamp does not match the APK as cordial-run will see it; it would try to re-extract into a read-only directory".to_string());
     }
     if cordial_update::engine::installed_version(&dir.join("engine")).as_deref() != Some(version) {
-        problems.push("the engine-version cache is missing or wrong; every start would rescan the engine".to_string());
+        problems.push(
+            "the engine-version cache is missing or wrong; every start would rescan the engine"
+                .to_string(),
+        );
     }
     use std::os::unix::fs::PermissionsExt;
-    let mode = fs::metadata(&dir).map(|m| m.permissions().mode() & 0o777).unwrap_or(0);
+    let mode = fs::metadata(&dir)
+        .map(|m| m.permissions().mode() & 0o777)
+        .unwrap_or(0);
     if mode & 0o222 != 0 {
-        problems.push(format!("the build directory is writable (mode {mode:o}); it should be sealed"));
+        problems.push(format!(
+            "the build directory is writable (mode {mode:o}); it should be sealed"
+        ));
     }
     Ok(problems)
 }
@@ -645,12 +803,18 @@ mod tests {
     fn input(dir: &Path, name: &str, bytes: &[u8]) -> Input {
         let p = dir.join(name);
         fs::write(&p, bytes).unwrap();
-        Input { file: File::open(p).unwrap(), given_name: name.into() }
+        Input {
+            file: File::open(p).unwrap(),
+            given_name: name.into(),
+        }
     }
 
     fn base_zip(version_code: u32) -> Vec<u8> {
         zip_of(&[
-            ("AndroidManifest.xml", &axml::build(false, ROBLOX_PACKAGE, version_code, None)),
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, ROBLOX_PACKAGE, version_code, None),
+            ),
             ("assets/content/fonts/a.ttf", b"font-a"),
             ("assets/ssl/cacert.pem", b"-----BEGIN CERTIFICATE-----"),
             ("assets/android/x.json", b"{}"),
@@ -659,14 +823,20 @@ mod tests {
 
     fn split_zip(version_code: u32, engine: &[u8]) -> Vec<u8> {
         zip_of(&[
-            ("AndroidManifest.xml", &axml::build(true, ROBLOX_PACKAGE, version_code, Some("config.x86_64"))),
+            (
+                "AndroidManifest.xml",
+                &axml::build(true, ROBLOX_PACKAGE, version_code, Some("config.x86_64")),
+            ),
             ("lib/x86_64/libroblox.so", engine),
         ])
     }
 
     fn mono_zip() -> Vec<u8> {
         zip_of(&[
-            ("AndroidManifest.xml", &axml::build(false, ROBLOX_PACKAGE, 7, None)),
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, ROBLOX_PACKAGE, 7, None),
+            ),
             ("assets/content/fonts/a.ttf", b"font-a"),
             ("lib/x86_64/libroblox.so", ENGINE_BYTES),
             ("lib/arm64-v8a/libroblox.so", b"arm engine"),
@@ -674,11 +844,23 @@ mod tests {
     }
 
     fn run_import(store: &Store, inputs: Vec<Input>, v: &dyn Verifier, now: u64) -> Result<Report> {
-        run(store, Request { inputs, label: Some("test".into()), make_current: false, verifier: v, now }, &mut |_| {})
+        run(
+            store,
+            Request {
+                inputs,
+                label: Some("test".into()),
+                make_current: false,
+                verifier: v,
+                now,
+            },
+            &mut |_| {},
+        )
     }
 
     fn trusting(k: &Signer) -> PinnedVerifier {
-        PinnedVerifier { trusted: vec![fingerprint(&k.spki, "t")] }
+        PinnedVerifier {
+            trusted: vec![fingerprint(&k.spki, "t")],
+        }
     }
 
     #[test]
@@ -688,8 +870,16 @@ mod tests {
         let k = new_signer();
         let inputs = vec![
             input(&d, "base.apk", &sign_v2(&base_zip(77), &k, &k.spki, "t")),
-            input(&d, "split_config.x86_64.apk", &sign_v2(&split_zip(77, ENGINE_BYTES), &k, &k.spki, "t")),
-            input(&d, "split_config.en.apk", &sign_v2(&zip_of(&[("res/x", b"1")]), &k, &k.spki, "t")),
+            input(
+                &d,
+                "split_config.x86_64.apk",
+                &sign_v2(&split_zip(77, ENGINE_BYTES), &k, &k.spki, "t"),
+            ),
+            input(
+                &d,
+                "split_config.en.apk",
+                &sign_v2(&zip_of(&[("res/x", b"1")]), &k, &k.spki, "t"),
+            ),
         ];
         let r = run_import(&store, inputs, &trusting(&k), 1000).unwrap();
         assert_eq!(r.version, "2.738.0.1397");
@@ -701,10 +891,18 @@ mod tests {
 
         let b = store.build_dir("2.738.0.1397");
         assert!(b.join("engine/libroblox.so").is_file());
-        assert!(b.join("apk/base.apk").is_file() && b.join("apk/split_config.x86_64.apk").is_file());
-        assert_eq!(fs::read(b.join("assets/content/fonts/a.ttf")).unwrap(), b"font-a");
+        assert!(
+            b.join("apk/base.apk").is_file() && b.join("apk/split_config.x86_64.apk").is_file()
+        );
+        assert_eq!(
+            fs::read(b.join("assets/content/fonts/a.ttf")).unwrap(),
+            b"font-a"
+        );
         assert_eq!(store.current().as_deref(), Some("2.738.0.1397"));
-        assert_eq!(verify_build(&store, "2.738.0.1397").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            verify_build(&store, "2.738.0.1397").unwrap(),
+            Vec::<String>::new()
+        );
         // what cordial-run asks, asked directly
         let canon = fs::canonicalize(b.join("apk/base.apk")).unwrap();
         assert!(cordial_update::cache::is_current(&b.join("assets"), &canon));
@@ -719,7 +917,17 @@ mod tests {
         let d = scratch("mono");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        let r = run_import(&store, vec![input(&d, "roblox.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))], &trusting(&k), 1).unwrap();
+        let r = run_import(
+            &store,
+            vec![input(
+                &d,
+                "roblox.apk",
+                &sign_v2(&mono_zip(), &k, &k.spki, "t"),
+            )],
+            &trusting(&k),
+            1,
+        )
+        .unwrap();
         assert!(!r.split);
         assert_eq!(r.archives[0].role, "monolithic");
         let engine = fs::read(store.build_dir(&r.version).join("engine/libroblox.so")).unwrap();
@@ -748,13 +956,28 @@ mod tests {
         let d = scratch("conflict");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        run_import(&store, vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))], &trusting(&k), 1).unwrap();
+        run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))],
+            &trusting(&k),
+            1,
+        )
+        .unwrap();
         let other = zip_of(&[
-            ("AndroidManifest.xml", &axml::build(false, ROBLOX_PACKAGE, 7, None)),
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, ROBLOX_PACKAGE, 7, None),
+            ),
             ("assets/content/x", b"x"),
             ("lib/x86_64/libroblox.so", b"\0 tampered 2.738.0.1397 \0"),
         ]);
-        let e = run_import(&store, vec![input(&d, "b.apk", &sign_v2(&other, &k, &k.spki, "t"))], &trusting(&k), 2).unwrap_err();
+        let e = run_import(
+            &store,
+            vec![input(&d, "b.apk", &sign_v2(&other, &k, &k.spki, "t"))],
+            &trusting(&k),
+            2,
+        )
+        .unwrap_err();
         assert!(matches!(e, Error::Conflict(_)), "{e}");
         let _ = make_writable(&d);
         fs::remove_dir_all(d).ok();
@@ -767,9 +990,15 @@ mod tests {
         let k = new_signer();
         let inputs = vec![
             input(&d, "base.apk", &sign_v2(&base_zip(77), &k, &k.spki, "t")),
-            input(&d, "split.apk", &sign_v2(&split_zip(78, ENGINE_BYTES), &k, &k.spki, "t")),
+            input(
+                &d,
+                "split.apk",
+                &sign_v2(&split_zip(78, ENGINE_BYTES), &k, &k.spki, "t"),
+            ),
         ];
-        let e = run_import(&store, inputs, &trusting(&k), 1).unwrap_err().to_string();
+        let e = run_import(&store, inputs, &trusting(&k), 1)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("version codes differ"), "{e}");
         assert!(store.list().is_empty());
         let _ = make_writable(&d);
@@ -781,10 +1010,16 @@ mod tests {
         let d = scratch("signers");
         let store = Store::new(d.join("runtime"));
         let (k1, k2) = (new_signer(), new_signer());
-        let v = PinnedVerifier { trusted: vec![fingerprint(&k1.spki, "t"), fingerprint(&k2.spki, "t")] };
+        let v = PinnedVerifier {
+            trusted: vec![fingerprint(&k1.spki, "t"), fingerprint(&k2.spki, "t")],
+        };
         let inputs = vec![
             input(&d, "base.apk", &sign_v2(&base_zip(77), &k1, &k1.spki, "t")),
-            input(&d, "split.apk", &sign_v2(&split_zip(77, ENGINE_BYTES), &k2, &k2.spki, "t")),
+            input(
+                &d,
+                "split.apk",
+                &sign_v2(&split_zip(77, ENGINE_BYTES), &k2, &k2.spki, "t"),
+            ),
         ];
         let e = run_import(&store, inputs, &v, 1).unwrap_err().to_string();
         assert!(e.contains("not signed by the same certificate"), "{e}");
@@ -797,8 +1032,19 @@ mod tests {
         let d = scratch("untrusted");
         let store = Store::new(d.join("runtime"));
         let (k, other) = (new_signer(), new_signer());
-        let e = run_import(&store, vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))], &trusting(&other), 1).unwrap_err().to_string();
-        assert!(e.to_ascii_lowercase().contains("certificate") || e.contains(&fingerprint(&k.spki, "t")), "{e}");
+        let e = run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))],
+            &trusting(&other),
+            1,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.to_ascii_lowercase().contains("certificate")
+                || e.contains(&fingerprint(&k.spki, "t")),
+            "{e}"
+        );
         let _ = make_writable(&d);
         fs::remove_dir_all(d).ok();
     }
@@ -808,9 +1054,13 @@ mod tests {
         let d = scratch("forged");
         let store = Store::new(d.join("runtime"));
         let (roblox_like, forger) = (new_signer(), new_signer());
-        let v = PinnedVerifier { trusted: vec![fingerprint(&roblox_like.spki, "t")] };
+        let v = PinnedVerifier {
+            trusted: vec![fingerprint(&roblox_like.spki, "t")],
+        };
         let apk = sign_v2(&mono_zip(), &forger, &roblox_like.spki, "t");
-        let e = run_import(&store, vec![input(&d, "a.apk", &apk)], &v, 1).unwrap_err().to_string();
+        let e = run_import(&store, vec![input(&d, "a.apk", &apk)], &v, 1)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("does not contain the public key"), "{e}");
         assert!(store.list().is_empty());
         let _ = make_writable(&d);
@@ -822,8 +1072,22 @@ mod tests {
         let d = scratch("abi");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        let arm = zip_of(&[("AndroidManifest.xml", &axml::build(false, ROBLOX_PACKAGE, 1, None)), ("assets/a", b"a"), ("lib/arm64-v8a/libroblox.so", b"x")]);
-        let e = run_import(&store, vec![input(&d, "a.apk", &sign_v2(&arm, &k, &k.spki, "t"))], &trusting(&k), 1).unwrap_err().to_string();
+        let arm = zip_of(&[
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, ROBLOX_PACKAGE, 1, None),
+            ),
+            ("assets/a", b"a"),
+            ("lib/arm64-v8a/libroblox.so", b"x"),
+        ]);
+        let e = run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&arm, &k, &k.spki, "t"))],
+            &trusting(&k),
+            1,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(e.contains("arm64-v8a") && e.contains("x86_64"), "{e}");
         let _ = make_writable(&d);
         fs::remove_dir_all(d).ok();
@@ -834,8 +1098,22 @@ mod tests {
         let d = scratch("pkg");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        let z = zip_of(&[("AndroidManifest.xml", &axml::build(false, "com.example.notroblox", 1, None)), ("assets/a", b"a"), ("lib/x86_64/libroblox.so", ENGINE_BYTES)]);
-        let e = run_import(&store, vec![input(&d, "a.apk", &sign_v2(&z, &k, &k.spki, "t"))], &trusting(&k), 1).unwrap_err().to_string();
+        let z = zip_of(&[
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, "com.example.notroblox", 1, None),
+            ),
+            ("assets/a", b"a"),
+            ("lib/x86_64/libroblox.so", ENGINE_BYTES),
+        ]);
+        let e = run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&z, &k, &k.spki, "t"))],
+            &trusting(&k),
+            1,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(e.contains("com.example.notroblox"), "{e}");
         let _ = make_writable(&d);
         fs::remove_dir_all(d).ok();
@@ -847,11 +1125,21 @@ mod tests {
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
         let z = zip_of(&[
-            ("AndroidManifest.xml", &axml::build(false, ROBLOX_PACKAGE, 1, None)),
+            (
+                "AndroidManifest.xml",
+                &axml::build(false, ROBLOX_PACKAGE, 1, None),
+            ),
             ("assets/../../escape.txt", b"boom"),
             ("lib/x86_64/libroblox.so", ENGINE_BYTES),
         ]);
-        let e = run_import(&store, vec![input(&d, "a.apk", &sign_v2(&z, &k, &k.spki, "t"))], &trusting(&k), 1).unwrap_err().to_string();
+        let e = run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&z, &k, &k.spki, "t"))],
+            &trusting(&k),
+            1,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(e.contains(".."), "{e}");
         assert!(!d.join("escape.txt").exists() && !d.join("runtime/escape.txt").exists());
         let _ = make_writable(&d);
@@ -863,10 +1151,20 @@ mod tests {
         let d = scratch("inputs");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        let dev = Input { file: File::open("/dev/zero").unwrap(), given_name: "zero".into() };
+        let dev = Input {
+            file: File::open("/dev/zero").unwrap(),
+            given_name: "zero".into(),
+        };
         assert!(run_import(&store, vec![dev], &trusting(&k), 1).is_err());
         let apk = sign_v2(&mono_zip(), &k, &k.spki, "t");
-        let e = run_import(&store, vec![input(&d, "a.apk", &apk), input(&d, "b.apk", &apk)], &trusting(&k), 2).unwrap_err().to_string();
+        let e = run_import(
+            &store,
+            vec![input(&d, "a.apk", &apk), input(&d, "b.apk", &apk)],
+            &trusting(&k),
+            2,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(e.contains("given twice"), "{e}");
         assert!(run_import(&store, vec![], &trusting(&k), 3).is_err());
         let _ = make_writable(&d);
@@ -878,12 +1176,21 @@ mod tests {
         let d = scratch("tamper");
         let store = Store::new(d.join("runtime"));
         let k = new_signer();
-        let r = run_import(&store, vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))], &trusting(&k), 1).unwrap();
+        let r = run_import(
+            &store,
+            vec![input(&d, "a.apk", &sign_v2(&mono_zip(), &k, &k.spki, "t"))],
+            &trusting(&k),
+            1,
+        )
+        .unwrap();
         let eng = store.build_dir(&r.version).join("engine/libroblox.so");
         make_writable(&store.build_dir(&r.version)).unwrap();
         fs::write(&eng, b"different").unwrap();
         let problems = verify_build(&store, &r.version).unwrap();
-        assert!(problems.iter().any(|p| p.contains("recorded hash")), "{problems:?}");
+        assert!(
+            problems.iter().any(|p| p.contains("recorded hash")),
+            "{problems:?}"
+        );
         let _ = make_writable(&d);
         fs::remove_dir_all(d).ok();
     }

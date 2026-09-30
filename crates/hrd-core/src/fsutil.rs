@@ -32,7 +32,10 @@ pub fn euid() -> u32 {
 /// Write `data` to `path` so that readers see either the old contents or the
 /// new ones, never a prefix of the new.
 pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> Result<()> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
         .ok_or_else(|| Error::invalid(format!("{} has no file name", path.display())))?
@@ -52,14 +55,18 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> Result<()> {
             .open(&tmp)
             .ctx(|| format!("create {}", tmp.display()))?;
         // `mode` above is masked by the umask; this is not.
-        f.set_permissions(fs::Permissions::from_mode(mode)).ctx(|| format!("chmod {}", tmp.display()))?;
-        f.write_all(data).ctx(|| format!("write {}", tmp.display()))?;
+        f.set_permissions(fs::Permissions::from_mode(mode))
+            .ctx(|| format!("chmod {}", tmp.display()))?;
+        f.write_all(data)
+            .ctx(|| format!("write {}", tmp.display()))?;
         f.sync_all().ctx(|| format!("sync {}", tmp.display()))?;
         drop(f);
         fs::rename(&tmp, path).ctx(|| format!("rename {} to {}", tmp.display(), path.display()))?;
         // Without this the rename itself can be lost in a crash, which would
         // resurrect the old file after the caller was told the new one was safe.
-        File::open(dir).and_then(|d| d.sync_all()).ctx(|| format!("sync directory {}", dir.display()))?;
+        File::open(dir)
+            .and_then(|d| d.sync_all())
+            .ctx(|| format!("sync directory {}", dir.display()))?;
         Ok(())
     })();
 
@@ -71,7 +78,8 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> Result<()> {
 
 /// Serialise `value` as pretty JSON and [`atomic_write`] it.
 pub fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T, mode: u32) -> Result<()> {
-    let mut text = serde_json::to_vec_pretty(value).map_err(|e| Error::Internal(format!("serialise {}: {e}", path.display())))?;
+    let mut text = serde_json::to_vec_pretty(value)
+        .map_err(|e| Error::Internal(format!("serialise {}: {e}", path.display())))?;
     text.push(b'\n');
     atomic_write(path, &text, mode)
 }
@@ -85,9 +93,14 @@ pub fn read_limited(path: &Path, max: u64) -> Result<Vec<u8>> {
         .open(path)
         .ctx(|| format!("open {}", path.display()))?;
     let mut buf = Vec::new();
-    f.take(max + 1).read_to_end(&mut buf).ctx(|| format!("read {}", path.display()))?;
+    f.take(max + 1)
+        .read_to_end(&mut buf)
+        .ctx(|| format!("read {}", path.display()))?;
     if buf.len() as u64 > max {
-        return Err(Error::invalid(format!("{} is larger than the {max} byte limit", path.display())));
+        return Err(Error::invalid(format!(
+            "{} is larger than the {max} byte limit",
+            path.display()
+        )));
     }
     Ok(buf)
 }
@@ -111,10 +124,16 @@ pub fn ensure_private_dir(path: &Path, mode: u32) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(md) => {
             if md.file_type().is_symlink() {
-                return Err(Error::Denied(format!("{} is a symbolic link; refusing to use it as a private directory", path.display())));
+                return Err(Error::Denied(format!(
+                    "{} is a symbolic link; refusing to use it as a private directory",
+                    path.display()
+                )));
             }
             if !md.is_dir() {
-                return Err(Error::conflict(format!("{} exists and is not a directory", path.display())));
+                return Err(Error::conflict(format!(
+                    "{} exists and is not a directory",
+                    path.display()
+                )));
             }
             if md.uid() != euid() {
                 return Err(Error::Denied(format!(
@@ -125,15 +144,21 @@ pub fn ensure_private_dir(path: &Path, mode: u32) -> Result<()> {
                 )));
             }
             if md.mode() & 0o7777 != mode {
-                fs::set_permissions(path, fs::Permissions::from_mode(mode)).ctx(|| format!("chmod {}", path.display()))?;
+                fs::set_permissions(path, fs::Permissions::from_mode(mode))
+                    .ctx(|| format!("chmod {}", path.display()))?;
             }
             Ok(())
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            fs::DirBuilder::new().recursive(true).mode(mode).create(path).ctx(|| format!("create {}", path.display()))?;
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(mode)
+                .create(path)
+                .ctx(|| format!("create {}", path.display()))?;
             // Intermediate directories and the leaf were created through the
             // umask; the leaf must be exactly what was asked for.
-            fs::set_permissions(path, fs::Permissions::from_mode(mode)).ctx(|| format!("chmod {}", path.display()))?;
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))
+                .ctx(|| format!("chmod {}", path.display()))?;
             Ok(())
         }
         Err(e) => Err(Error::io(format!("stat {}", path.display()), e)),
@@ -150,7 +175,8 @@ pub fn open_private_append(path: &Path, mode: u32) -> Result<File> {
         .custom_flags((OFlags::NOFOLLOW | OFlags::CLOEXEC).bits() as i32)
         .open(path)
         .ctx(|| format!("open {}", path.display()))?;
-    f.set_permissions(fs::Permissions::from_mode(mode)).ctx(|| format!("chmod {}", path.display()))?;
+    f.set_permissions(fs::Permissions::from_mode(mode))
+        .ctx(|| format!("chmod {}", path.display()))?;
     Ok(f)
 }
 
@@ -159,7 +185,10 @@ pub fn open_private_append(path: &Path, mode: u32) -> Result<File> {
 pub fn require_private_file(path: &Path) -> Result<()> {
     let md = fs::symlink_metadata(path).ctx(|| format!("stat {}", path.display()))?;
     if md.file_type().is_symlink() || !md.is_file() {
-        return Err(Error::Denied(format!("{} must be a regular file", path.display())));
+        return Err(Error::Denied(format!(
+            "{} must be a regular file",
+            path.display()
+        )));
     }
     if md.mode() & 0o077 != 0 {
         return Err(Error::Denied(format!(
@@ -196,9 +225,15 @@ impl FileLock {
             .open(path)
             .ctx(|| format!("open lock file {}", path.display()))?;
         match flock(&file, FlockOperation::NonBlockingLockExclusive) {
-            Ok(()) => Ok(Some(FileLock { _file: file, path: path.to_path_buf() })),
+            Ok(()) => Ok(Some(FileLock {
+                _file: file,
+                path: path.to_path_buf(),
+            })),
             Err(rustix::io::Errno::WOULDBLOCK) => Ok(None),
-            Err(e) => Err(Error::io(format!("lock {}", path.display()), io::Error::from_raw_os_error(e.raw_os_error()))),
+            Err(e) => Err(Error::io(
+                format!("lock {}", path.display()),
+                io::Error::from_raw_os_error(e.raw_os_error()),
+            )),
         }
     }
 
@@ -238,7 +273,10 @@ mod tests {
         assert_eq!(fs::read(&f).unwrap(), b"two");
         assert_eq!(fs::metadata(&f).unwrap().mode() & 0o7777, 0o600);
         // no temporary left behind
-        let leftovers: Vec<_> = fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let leftovers: Vec<_> = fs::read_dir(&d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(leftovers.len(), 1, "{leftovers:?}");
         fs::remove_dir_all(d).unwrap();
     }
@@ -254,7 +292,10 @@ mod tests {
         atomic_write(&target, b"new", 0o600).unwrap();
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
         assert_eq!(fs::read(&target).unwrap(), b"new");
-        assert!(!fs::symlink_metadata(&target).unwrap().file_type().is_symlink());
+        assert!(!fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         fs::remove_dir_all(d).unwrap();
     }
 
@@ -277,7 +318,10 @@ mod tests {
         fs::create_dir(&real).unwrap();
         let link = d.join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        assert!(matches!(ensure_private_dir(&link, 0o700), Err(Error::Denied(_))));
+        assert!(matches!(
+            ensure_private_dir(&link, 0o700),
+            Err(Error::Denied(_))
+        ));
         fs::remove_dir_all(d).unwrap();
     }
 
@@ -309,9 +353,15 @@ mod tests {
         let d = scratch("lock");
         let f = d.join("l");
         let a = FileLock::try_acquire(&f).unwrap().expect("first acquire");
-        assert!(FileLock::try_acquire(&f).unwrap().is_none(), "second acquire must be refused");
+        assert!(
+            FileLock::try_acquire(&f).unwrap().is_none(),
+            "second acquire must be refused"
+        );
         drop(a);
-        assert!(FileLock::try_acquire(&f).unwrap().is_some(), "free again after drop");
+        assert!(
+            FileLock::try_acquire(&f).unwrap().is_some(),
+            "free again after drop"
+        );
         fs::remove_dir_all(d).unwrap();
     }
 }

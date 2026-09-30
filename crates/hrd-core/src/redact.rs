@@ -48,14 +48,26 @@ const MASK: &str = "[REDACTED]";
 const COOKIE_BANNER: &str = "_|WARNING:-DO-NOT-SHARE-THIS";
 
 /// Key names whose value, up to the end of the word, is masked.
-const KEYS: &[&str] = &[".ROBLOSECURITY", "ROBLOSECURITY", "PrivateKey", "PresharedKey", "password", "passphrase", "Authorization: Bearer", "x-csrf-token"];
+const KEYS: &[&str] = &[
+    ".ROBLOSECURITY",
+    "ROBLOSECURITY",
+    "PrivateKey",
+    "PresharedKey",
+    "password",
+    "passphrase",
+    "Authorization: Bearer",
+    "x-csrf-token",
+];
 
 /// Remove credential-shaped text from one line.
 pub fn scrub(line: &str) -> Cow<'_, str> {
     let mut out: Cow<'_, str> = Cow::Borrowed(line);
 
     if let Some(pos) = out.find(COOKIE_BANNER) {
-        let end = out[pos..].find(|c: char| c.is_whitespace() || c == ';' || c == '"' || c == '\'').map(|n| pos + n).unwrap_or(out.len());
+        let end = out[pos..]
+            .find(|c: char| c.is_whitespace() || c == ';' || c == '"' || c == '\'')
+            .map(|n| pos + n)
+            .unwrap_or(out.len());
         out = Cow::Owned(format!("{}{MASK}{}", &out[..pos], &out[end..]));
     }
 
@@ -69,7 +81,9 @@ pub fn scrub(line: &str) -> Cow<'_, str> {
         while let Some(rel) = lower[search_from..].find(&needle) {
             let key_end = search_from + rel + needle.len();
             let rest = &lower[key_end..];
-            let sep_len = rest.find(|c: char| !matches!(c, '=' | ':' | ' ' | '"' | '\'')).unwrap_or(rest.len());
+            let sep_len = rest
+                .find(|c: char| !matches!(c, '=' | ':' | ' ' | '"' | '\''))
+                .unwrap_or(rest.len());
             if sep_len == 0 {
                 search_from = key_end;
                 continue;
@@ -85,7 +99,11 @@ pub fn scrub(line: &str) -> Cow<'_, str> {
             }
             let base = rebuilt.take().unwrap_or_else(|| out.to_string());
             // `base` has the same prefix as `out` up to `value_start`.
-            rebuilt = Some(format!("{}{MASK}{}", &base[..value_start], &base[value_end..]));
+            rebuilt = Some(format!(
+                "{}{MASK}{}",
+                &base[..value_start],
+                &base[value_end..]
+            ));
             break;
         }
         if let Some(r) = rebuilt {
@@ -116,7 +134,9 @@ mod tests {
 
     #[test]
     fn scrub_masks_key_value_pairs() {
-        assert!(!scrub("PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").contains("AAAA"));
+        assert!(
+            !scrub("PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").contains("AAAA")
+        );
         assert!(!scrub("password=hunter2 user=x").contains("hunter2"));
         assert!(scrub("password=hunter2 user=x").contains("user=x"));
         assert!(!scrub("Authorization: Bearer abcdef").contains("abcdef"));

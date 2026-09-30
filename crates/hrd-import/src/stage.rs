@@ -44,10 +44,15 @@ pub fn copy_hashing(src: &mut File, dest: &Path, max: u64) -> Result<Staged> {
         } else {
             "not a regular file"
         };
-        return Err(Error::invalid(format!("input is {kind}; only regular files are imported")));
+        return Err(Error::invalid(format!(
+            "input is {kind}; only regular files are imported"
+        )));
     }
     if md.len() > max {
-        return Err(Error::invalid(format!("input is {} bytes, more than the {max} byte limit", md.len())));
+        return Err(Error::invalid(format!(
+            "input is {} bytes, more than the {max} byte limit",
+            md.len()
+        )));
     }
     let mut out = OpenOptions::new()
         .write(true)
@@ -68,13 +73,20 @@ pub fn copy_hashing(src: &mut File, dest: &Path, max: u64) -> Result<Staged> {
         // The file may grow while it is read; the limit is on what is copied,
         // not on what `stat` said.
         if total > max {
-            return Err(Error::invalid(format!("input grew past the {max} byte limit while it was read")));
+            return Err(Error::invalid(format!(
+                "input grew past the {max} byte limit while it was read"
+            )));
         }
         hasher.update(&buf[..n]);
-        out.write_all(&buf[..n]).map_err(|e| Error::io(format!("write {}", dest.display()), e))?;
+        out.write_all(&buf[..n])
+            .map_err(|e| Error::io(format!("write {}", dest.display()), e))?;
     }
-    out.sync_all().map_err(|e| Error::io(format!("sync {}", dest.display()), e))?;
-    Ok(Staged { size: total, sha256: hex(&hasher.finalize()) })
+    out.sync_all()
+        .map_err(|e| Error::io(format!("sync {}", dest.display()), e))?;
+    Ok(Staged {
+        size: total,
+        sha256: hex(&hasher.finalize()),
+    })
 }
 
 /// SHA-256 of a file, streaming.
@@ -84,19 +96,29 @@ pub fn hash_file(path: &Path) -> Result<Staged> {
     let mut buf = vec![0u8; 1 << 20];
     let mut total = 0u64;
     loop {
-        let n = f.read(&mut buf).map_err(|e| Error::io(format!("read {}", path.display()), e))?;
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| Error::io(format!("read {}", path.display()), e))?;
         if n == 0 {
             break;
         }
         total += n as u64;
         h.update(&buf[..n]);
     }
-    Ok(Staged { size: total, sha256: hex(&h.finalize()) })
+    Ok(Staged {
+        size: total,
+        sha256: hex(&h.finalize()),
+    })
 }
 
 /// Free bytes on the filesystem holding `path`.
 pub fn free_bytes(path: &Path) -> Result<u64> {
-    let st = rustix::fs::statvfs(path).map_err(|e| Error::io(format!("statvfs {}", path.display()), std::io::Error::from_raw_os_error(e.raw_os_error())))?;
+    let st = rustix::fs::statvfs(path).map_err(|e| {
+        Error::io(
+            format!("statvfs {}", path.display()),
+            std::io::Error::from_raw_os_error(e.raw_os_error()),
+        )
+    })?;
     Ok(st.f_bavail.saturating_mul(st.f_frsize))
 }
 
@@ -118,7 +140,10 @@ mod tests {
         let mut f = File::open(d.join("in")).unwrap();
         let s = copy_hashing(&mut f, &d.join("out"), 1000).unwrap();
         assert_eq!(s.size, 3);
-        assert_eq!(s.sha256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            s.sha256,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert_eq!(std::fs::read(d.join("out")).unwrap(), b"abc");
         assert_eq!(hash_file(&d.join("out")).unwrap(), s);
         std::fs::remove_dir_all(d).ok();
@@ -133,7 +158,9 @@ mod tests {
         let mut dir = File::open(&d).unwrap();
         assert!(copy_hashing(&mut dir, &d.join("o2"), 1000).is_err());
         let mut dev = File::open("/dev/zero").unwrap();
-        let e = copy_hashing(&mut dev, &d.join("o3"), 1000).unwrap_err().to_string();
+        let e = copy_hashing(&mut dev, &d.join("o3"), 1000)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("device"), "{e}");
         std::fs::remove_dir_all(d).ok();
     }

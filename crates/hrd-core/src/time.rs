@@ -9,7 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Seconds since the Unix epoch. Zero if the clock is before it.
 pub fn now_unix() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Milliseconds on `CLOCK_MONOTONIC`: unaffected by the wall clock being set,
@@ -24,7 +27,12 @@ pub fn rfc3339(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -42,7 +50,12 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// `3d04h`, `2h05m`, `4m09s`, `12s`: two units, for tables.
 pub fn human_duration(secs: u64) -> String {
-    let (d, h, m, s) = (secs / 86_400, (secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    let (d, h, m, s) = (
+        secs / 86_400,
+        (secs / 3600) % 24,
+        (secs / 60) % 60,
+        secs % 60,
+    );
     if d > 0 {
         format!("{d}d{h:02}h")
     } else if h > 0 {

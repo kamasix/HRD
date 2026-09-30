@@ -35,7 +35,9 @@ pub fn parse_mount(mountinfo: &str) -> Option<PathBuf> {
         if fstype != "cgroup2" {
             return None;
         }
-        head.split_whitespace().nth(4).map(|p| PathBuf::from(unescape_mount(p)))
+        head.split_whitespace()
+            .nth(4)
+            .map(|p| PathBuf::from(unescape_mount(p)))
     })
 }
 
@@ -45,7 +47,10 @@ fn unescape_mount(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+        if b[i] == b'\\'
+            && i + 3 < b.len()
+            && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+        {
             let v = (b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0');
             out.push(v);
             i += 4;
@@ -124,12 +129,16 @@ impl Cgroup {
 
     /// Controllers this cgroup may use.
     pub fn controllers(&self) -> Vec<String> {
-        self.read("cgroup.controllers").map(|t| t.split_whitespace().map(String::from).collect()).unwrap_or_default()
+        self.read("cgroup.controllers")
+            .map(|t| t.split_whitespace().map(String::from).collect())
+            .unwrap_or_default()
     }
 
     /// Controllers enabled for its children.
     pub fn subtree_controllers(&self) -> Vec<String> {
-        self.read("cgroup.subtree_control").map(|t| t.split_whitespace().map(String::from).collect()).unwrap_or_default()
+        self.read("cgroup.subtree_control")
+            .map(|t| t.split_whitespace().map(String::from).collect())
+            .unwrap_or_default()
     }
 
     /// Enable whichever of `wanted` the cgroup has, one at a time so that one
@@ -158,8 +167,16 @@ impl Cgroup {
     }
 
     pub fn create(&self, name: &str) -> io::Result<Cgroup> {
-        if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad cgroup name {name:?}")));
+        if name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.contains('/')
+            || name.contains('\0')
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("bad cgroup name {name:?}"),
+            ));
         }
         let dir = self.dir.join(name);
         match fs::create_dir(&dir) {
@@ -171,7 +188,9 @@ impl Cgroup {
     }
 
     pub fn child(&self, name: &str) -> Cgroup {
-        Cgroup { dir: self.dir.join(name) }
+        Cgroup {
+            dir: self.dir.join(name),
+        }
     }
 
     pub fn add_pid(&self, pid: u32) -> io::Result<()> {
@@ -179,13 +198,20 @@ impl Cgroup {
     }
 
     pub fn pids(&self) -> io::Result<Vec<u32>> {
-        Ok(self.read("cgroup.procs")?.lines().filter_map(|l| l.trim().parse().ok()).collect())
+        Ok(self
+            .read("cgroup.procs")?
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect())
     }
 
     /// Whether any process is in this cgroup or below it. Kernel-maintained,
     /// so it is true for a zombie nobody has reaped yet.
     pub fn populated(&self) -> io::Result<bool> {
-        Ok(self.read("cgroup.events")?.lines().any(|l| l.trim() == "populated 1"))
+        Ok(self
+            .read("cgroup.events")?
+            .lines()
+            .any(|l| l.trim() == "populated 1"))
     }
 
     /// Kill everything in the cgroup and below it. Does not wait.
@@ -240,8 +266,16 @@ impl Cgroup {
     }
 
     pub fn memory(&self) -> Memory {
-        let stat = self.read("memory.stat").ok().map(|t| parse_flat_keyed(&t)).unwrap_or_default();
-        let events = self.read("memory.events").ok().map(|t| parse_flat_keyed(&t)).unwrap_or_default();
+        let stat = self
+            .read("memory.stat")
+            .ok()
+            .map(|t| parse_flat_keyed(&t))
+            .unwrap_or_default();
+        let events = self
+            .read("memory.events")
+            .ok()
+            .map(|t| parse_flat_keyed(&t))
+            .unwrap_or_default();
         Memory {
             current: self.read_u64("memory.current"),
             peak: self.read_u64("memory.peak"),
@@ -257,7 +291,9 @@ impl Cgroup {
     /// Total CPU time used by the cgroup, in microseconds. Unlike summing
     /// `/proc/<pid>/stat` this includes processes that have since exited.
     pub fn cpu_usage_usec(&self) -> Option<u64> {
-        parse_flat_keyed(&self.read("cpu.stat").ok()?).get("usage_usec").copied()
+        parse_flat_keyed(&self.read("cpu.stat").ok()?)
+            .get("usage_usec")
+            .copied()
     }
 
     pub fn pids_current(&self) -> Option<u64> {
@@ -282,7 +318,8 @@ pub fn parse_flat_keyed(text: &str) -> std::collections::HashMap<String, u64> {
 /// which is what makes it acceptable between `fork` and `exec` in a
 /// multi-threaded parent. Writing `0` means "the writing process".
 pub fn enter_prepared(procs_file: &CStr) -> io::Result<()> {
-    let fd = rustix::fs::open(procs_file, OFlags::WRONLY | OFlags::CLOEXEC, Mode::empty()).map_err(io::Error::from)?;
+    let fd = rustix::fs::open(procs_file, OFlags::WRONLY | OFlags::CLOEXEC, Mode::empty())
+        .map_err(io::Error::from)?;
     let r = rustix::io::write(&fd, b"0").map_err(io::Error::from);
     drop(fd);
     r.map(|_| ())
@@ -313,7 +350,11 @@ pub fn prepare_delegated(base: &Cgroup, self_pid: u32) -> io::Result<Delegated> 
     let _ = instances.enable_subtree(&wanted);
     let controllers: Vec<String> = instances.subtree_controllers();
     let _ = enabled;
-    Ok(Delegated { manager, instances, controllers })
+    Ok(Delegated {
+        manager,
+        instances,
+        controllers,
+    })
 }
 
 #[cfg(test)]
@@ -326,7 +367,10 @@ mod tests {
         assert_eq!(parse_mount(mi), Some(PathBuf::from("/sys/fs/cgroup")));
         assert_eq!(parse_mount("31 1 8:1 / / rw - ext4 /dev/sda1 rw\n"), None);
         // v1 mounts named cgroup must not be mistaken for v2
-        assert_eq!(parse_mount("40 30 0:30 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n"), None);
+        assert_eq!(
+            parse_mount("40 30 0:30 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n"),
+            None
+        );
     }
 
     #[test]
@@ -340,7 +384,7 @@ mod tests {
         let m = parse_flat_keyed("anon 100\nfile 200\nweird\nshmem x\n");
         assert_eq!(m.get("anon"), Some(&100));
         assert_eq!(m.get("file"), Some(&200));
-        assert!(m.get("shmem").is_none());
+        assert!(!m.contains_key("shmem"));
     }
 
     #[test]
@@ -362,9 +406,21 @@ mod tests {
         fs::write(d.join("memory.current"), "1048576\n").unwrap();
         fs::write(d.join("memory.peak"), "2097152\n").unwrap();
         fs::write(d.join("memory.swap.current"), "0\n").unwrap();
-        fs::write(d.join("memory.stat"), "anon 700000\nfile 300000\nshmem 1000\nkernel 50000\n").unwrap();
-        fs::write(d.join("memory.events"), "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\n").unwrap();
-        fs::write(d.join("cpu.stat"), "usage_usec 5000000\nuser_usec 4000000\n").unwrap();
+        fs::write(
+            d.join("memory.stat"),
+            "anon 700000\nfile 300000\nshmem 1000\nkernel 50000\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("memory.events"),
+            "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("cpu.stat"),
+            "usage_usec 5000000\nuser_usec 4000000\n",
+        )
+        .unwrap();
         fs::write(d.join("memory.max"), "max\n").unwrap();
         let cg = Cgroup::at(d.clone());
         let m = cg.memory();

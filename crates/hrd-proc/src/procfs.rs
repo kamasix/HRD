@@ -81,7 +81,12 @@ pub fn parse_stat(line: &str) -> Option<Stat> {
 
 pub fn read_stat(pid: u32) -> io::Result<Stat> {
     let text = fs::read_to_string(format!("/proc/{pid}/stat"))?;
-    parse_stat(&text).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("unparseable /proc/{pid}/stat")))
+    parse_stat(&text).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unparseable /proc/{pid}/stat"),
+        )
+    })
 }
 
 /// Start ticks alone, for checking that a pid still names the same process.
@@ -141,12 +146,17 @@ pub fn parse_status(text: &str) -> Status {
         rss_shmem: b("RssShmem"),
         vm_swap: b("VmSwap"),
         threads: kv.get("Threads").and_then(|v| v.parse().ok()),
-        uid: kv.get("Uid").and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()),
+        uid: kv
+            .get("Uid")
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse().ok()),
     }
 }
 
 pub fn read_status(pid: u32) -> io::Result<Status> {
-    Ok(parse_status(&fs::read_to_string(format!("/proc/{pid}/status"))?))
+    Ok(parse_status(&fs::read_to_string(format!(
+        "/proc/{pid}/status"
+    ))?))
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +212,9 @@ pub fn parse_smaps_rollup(text: &str) -> Smaps {
 /// space. That is why the sampler calls it far less often than it reads
 /// `stat`.
 pub fn read_smaps_rollup(pid: u32) -> io::Result<Smaps> {
-    Ok(parse_smaps_rollup(&fs::read_to_string(format!("/proc/{pid}/smaps_rollup"))?))
+    Ok(parse_smaps_rollup(&fs::read_to_string(format!(
+        "/proc/{pid}/smaps_rollup"
+    ))?))
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +227,11 @@ pub fn read_smaps_rollup(pid: u32) -> io::Result<Smaps> {
 pub fn exe_basename(pid: u32) -> Option<String> {
     let target = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     let name = target.file_name()?.to_string_lossy().into_owned();
-    Some(name.strip_suffix(" (deleted)").map(str::to_string).unwrap_or(name))
+    Some(
+        name.strip_suffix(" (deleted)")
+            .map(str::to_string)
+            .unwrap_or(name),
+    )
 }
 
 /// The cgroup v2 path of a process (the `0::` line), relative to the mount.
@@ -224,7 +240,9 @@ pub fn cgroup_of(pid: u32) -> Option<String> {
 }
 
 pub fn parse_cgroup_v2(text: &str) -> Option<String> {
-    text.lines().find_map(|l| l.strip_prefix("0::")).map(|p| p.to_string())
+    text.lines()
+        .find_map(|l| l.strip_prefix("0::"))
+        .map(|p| p.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +260,12 @@ pub struct MemInfo {
 pub fn parse_meminfo(text: &str) -> MemInfo {
     let kv = parse_kv(text);
     let b = |k: &str| kv.get(k).and_then(|v| kb_to_bytes(v));
-    MemInfo { total: b("MemTotal"), available: b("MemAvailable"), swap_total: b("SwapTotal"), swap_free: b("SwapFree") }
+    MemInfo {
+        total: b("MemTotal"),
+        available: b("MemAvailable"),
+        swap_total: b("SwapTotal"),
+        swap_free: b("SwapFree"),
+    }
 }
 
 pub fn read_meminfo() -> io::Result<MemInfo> {
@@ -292,7 +315,10 @@ pub fn read_memory_psi() -> Option<Psi> {
 /// All numeric entries of `/proc`.
 pub fn list_pids() -> Vec<u32> {
     fs::read_dir("/proc")
-        .map(|d| d.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok()).collect())
+        .map(|d| {
+            d.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -313,7 +339,11 @@ pub fn parse_net_dev(text: &str) -> Vec<NetDev> {
         .filter_map(|l| {
             let (name, rest) = l.split_once(':')?;
             let f: Vec<&str> = rest.split_whitespace().collect();
-            Some(NetDev { name: name.trim().to_string(), rx_bytes: f.first()?.parse().ok()?, tx_bytes: f.get(8)?.parse().ok()? })
+            Some(NetDev {
+                name: name.trim().to_string(),
+                rx_bytes: f.first()?.parse().ok()?,
+                tx_bytes: f.get(8)?.parse().ok()?,
+            })
         })
         .collect()
 }
@@ -322,7 +352,9 @@ pub fn parse_net_dev(text: &str) -> Vec<NetDev> {
 /// through a process that is inside a group's namespace is how the manager
 /// sees that group's traffic without entering the namespace itself.
 pub fn read_net_dev(pid: u32) -> io::Result<Vec<NetDev>> {
-    Ok(parse_net_dev(&fs::read_to_string(format!("/proc/{pid}/net/dev"))?))
+    Ok(parse_net_dev(&fs::read_to_string(format!(
+        "/proc/{pid}/net/dev"
+    ))?))
 }
 
 /// The inode of the network namespace `pid` is in, as the kernel names it.
@@ -398,7 +430,9 @@ mod tests {
 
     #[test]
     fn meminfo_and_psi() {
-        let m = parse_meminfo("MemTotal: 16000000 kB\nMemAvailable: 12000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n");
+        let m = parse_meminfo(
+            "MemTotal: 16000000 kB\nMemAvailable: 12000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n",
+        );
         assert_eq!(m.available, Some(12_000_000 * 1024));
         let p = parse_psi("some avg10=1.50 avg60=0.75 avg300=0.10 total=123\nfull avg10=0.25 avg60=0.10 avg300=0.00 total=9\n").unwrap();
         assert_eq!(p.some_avg10, 1.5);
@@ -408,12 +442,22 @@ mod tests {
 
     #[test]
     fn cgroup_line_and_net_dev() {
-        assert_eq!(parse_cgroup_v2("12:cpu:/x\n0::/system.slice/cordiald.service/i/alt-1\n").as_deref(), Some("/system.slice/cordiald.service/i/alt-1"));
+        assert_eq!(
+            parse_cgroup_v2("12:cpu:/x\n0::/system.slice/cordiald.service/i/alt-1\n").as_deref(),
+            Some("/system.slice/cordiald.service/i/alt-1")
+        );
         assert_eq!(parse_cgroup_v2("1:name=systemd:/\n"), None);
         let nd = "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0\n   wg0:  123456     100    0    0    0     0          0         0   654321     90    0    0    0     0       0          0\n";
         let d = parse_net_dev(nd);
         assert_eq!(d.len(), 2);
-        assert_eq!(d[1], NetDev { name: "wg0".into(), rx_bytes: 123456, tx_bytes: 654321 });
+        assert_eq!(
+            d[1],
+            NetDev {
+                name: "wg0".into(),
+                rx_bytes: 123456,
+                tx_bytes: 654321
+            }
+        );
     }
 
     // The two tests below read the real /proc of the test process itself. They

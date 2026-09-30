@@ -41,7 +41,10 @@ impl FromStr for IpNet {
             Some((a, p)) => (a, Some(p)),
             None => (s, None),
         };
-        let addr: IpAddr = a.trim().parse().map_err(|_| format!("{s:?} is not an IP address"))?;
+        let addr: IpAddr = a
+            .trim()
+            .parse()
+            .map_err(|_| format!("{s:?} is not an IP address"))?;
         let max = IpNet::max_prefix(&addr);
         let prefix = match p {
             None => max,
@@ -49,7 +52,8 @@ impl FromStr for IpNet {
                 if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) || p.len() > 3 {
                     return Err(format!("{s:?} has a malformed prefix length"));
                 }
-                p.parse::<u8>().map_err(|_| format!("{s:?} has a prefix length out of range"))?
+                p.parse::<u8>()
+                    .map_err(|_| format!("{s:?} has a prefix length out of range"))?
             }
         };
         if prefix > max {
@@ -94,7 +98,19 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        for bad in ["", "10.0.0.1/33", "::1/129", "10.0.0/24", "a.b.c.d", "10.0.0.1/", "10.0.0.1/-1", "10.0.0.1/ 24", "10.0.0.1/24/1", "10.0.0.1;ls", "1.2.3.4/0x10"] {
+        for bad in [
+            "",
+            "10.0.0.1/33",
+            "::1/129",
+            "10.0.0/24",
+            "a.b.c.d",
+            "10.0.0.1/",
+            "10.0.0.1/-1",
+            "10.0.0.1/ 24",
+            "10.0.0.1/24/1",
+            "10.0.0.1;ls",
+            "1.2.3.4/0x10",
+        ] {
             assert!(bad.parse::<IpNet>().is_err(), "{bad:?}");
         }
     }

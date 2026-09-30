@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::model::ResourceMode;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     pub service: ServiceCfg,
@@ -31,22 +31,6 @@ pub struct Config {
     pub secrets: SecretsCfg,
     pub network: NetworkCfg,
     pub logs: LogsCfg,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            service: ServiceCfg::default(),
-            control: ControlCfg::default(),
-            scheduler: SchedulerCfg::default(),
-            resources: ResourcesCfg::default(),
-            engine: EngineCfg::default(),
-            stats: StatsCfg::default(),
-            secrets: SecretsCfg::default(),
-            network: NetworkCfg::default(),
-            logs: LogsCfg::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +45,10 @@ pub struct ServiceCfg {
 
 impl Default for ServiceCfg {
     fn default() -> Self {
-        ServiceCfg { user: "cordial".into(), group: "cordial".into() }
+        ServiceCfg {
+            user: "cordial".into(),
+            group: "cordial".into(),
+        }
     }
 }
 
@@ -79,7 +66,10 @@ pub struct ControlCfg {
 
 impl Default for ControlCfg {
     fn default() -> Self {
-        ControlCfg { socket_mode: "0660".into(), allowed_uids: Vec::new() }
+        ControlCfg {
+            socket_mode: "0660".into(),
+            allowed_uids: Vec::new(),
+        }
     }
 }
 
@@ -237,7 +227,10 @@ pub struct StatsCfg {
 
 impl Default for StatsCfg {
     fn default() -> Self {
-        StatsCfg { interval_s: 5, pss_interval_s: 30 }
+        StatsCfg {
+            interval_s: 5,
+            pss_interval_s: 30,
+        }
     }
 }
 
@@ -285,7 +278,10 @@ pub struct NetworkCfg {
 
 impl Default for NetworkCfg {
     fn default() -> Self {
-        NetworkCfg { allow_unrouted: false, handshake_max_age_s: 180 }
+        NetworkCfg {
+            allow_unrouted: false,
+            handshake_max_age_s: 180,
+        }
     }
 }
 
@@ -298,7 +294,9 @@ pub struct LogsCfg {
 
 impl Default for LogsCfg {
     fn default() -> Self {
-        LogsCfg { max_bytes: 16 * 1024 * 1024 }
+        LogsCfg {
+            max_bytes: 16 * 1024 * 1024,
+        }
     }
 }
 
@@ -308,10 +306,11 @@ impl Config {
         match fsutil::read_limited_opt(path, 256 * 1024)? {
             None => Ok(Config::default()),
             Some(bytes) => {
-                let text = std::str::from_utf8(&bytes)
-                    .map_err(|_| Error::invalid(format!("{} is not valid UTF-8", path.display())))?;
-                let cfg: Config =
-                    toml::from_str(text).map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
+                let text = std::str::from_utf8(&bytes).map_err(|_| {
+                    Error::invalid(format!("{} is not valid UTF-8", path.display()))
+                })?;
+                let cfg: Config = toml::from_str(text)
+                    .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
                 cfg.validate()?;
                 Ok(cfg)
             }
@@ -331,10 +330,16 @@ impl Config {
         let mut p = Vec::new();
         let s = &self.scheduler;
         if s.max_instances == 0 || s.max_instances > 10_000 {
-            p.push(format!("scheduler.max_instances = {} is outside 1..=10000", s.max_instances));
+            p.push(format!(
+                "scheduler.max_instances = {} is outside 1..=10000",
+                s.max_instances
+            ));
         }
         if s.max_concurrent_starts == 0 || s.max_concurrent_starts > 64 {
-            p.push(format!("scheduler.max_concurrent_starts = {} is outside 1..=64", s.max_concurrent_starts));
+            p.push(format!(
+                "scheduler.max_concurrent_starts = {} is outside 1..=64",
+                s.max_concurrent_starts
+            ));
         }
         if s.stop_grace_s == 0 || s.stop_grace_s > 600 {
             p.push("scheduler.stop_grace_s must be 1..=600".into());
@@ -358,23 +363,39 @@ impl Config {
         if !(-1000..=1000).contains(&r.oom_score_adj) {
             p.push("resources.oom_score_adj must be -1000..=1000".into());
         }
-        if u32::from_str_radix(self.control.socket_mode.trim_start_matches('0'), 8).map(|m| m > 0o777).unwrap_or(true)
+        if u32::from_str_radix(self.control.socket_mode.trim_start_matches('0'), 8)
+            .map(|m| m > 0o777)
+            .unwrap_or(true)
             && self.control.socket_mode != "0"
         {
-            p.push(format!("control.socket_mode {:?} is not an octal mode", self.control.socket_mode));
+            p.push(format!(
+                "control.socket_mode {:?} is not an octal mode",
+                self.control.socket_mode
+            ));
         }
-        if !self.engine.resolution.is_empty() && parse_resolution(&self.engine.resolution).is_none() {
-            p.push(format!("engine.resolution {:?} must look like 1280x720", self.engine.resolution));
+        if !self.engine.resolution.is_empty() && parse_resolution(&self.engine.resolution).is_none()
+        {
+            p.push(format!(
+                "engine.resolution {:?} must look like 1280x720",
+                self.engine.resolution
+            ));
         }
         for (k, v) in &self.engine.env {
             if !allowed_engine_env(k) {
-                p.push(format!("engine.env key {k:?} is not allowed: only CORDIAL_* and MIMALLOC_* names"));
+                p.push(format!(
+                    "engine.env key {k:?} is not allowed: only CORDIAL_* and MIMALLOC_* names"
+                ));
             }
             if v.contains('\0') || v.contains('\n') {
-                p.push(format!("engine.env value for {k} contains a control character"));
+                p.push(format!(
+                    "engine.env value for {k} contains a control character"
+                ));
             }
         }
-        for (name, path) in [("engine.cordial_run", &self.engine.cordial_run), ("engine.enter", &self.engine.enter)] {
+        for (name, path) in [
+            ("engine.cordial_run", &self.engine.cordial_run),
+            ("engine.enter", &self.engine.enter),
+        ] {
             if !path.starts_with('/') {
                 p.push(format!("{name} must be an absolute path"));
             }
@@ -390,7 +411,10 @@ impl Config {
         if p.is_empty() {
             Ok(())
         } else {
-            Err(Error::invalid(format!("invalid configuration:\n  - {}", p.join("\n  - "))))
+            Err(Error::invalid(format!(
+                "invalid configuration:\n  - {}",
+                p.join("\n  - ")
+            )))
         }
     }
 }
@@ -406,7 +430,10 @@ pub fn parse_resolution(s: &str) -> Option<(u32, u32)> {
 /// redirect the dynamic loader, the profile root or the secret store, each of
 /// which this manager sets deliberately.
 pub fn allowed_engine_env(name: &str) -> bool {
-    let shaped = !name.is_empty() && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+    let shaped = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
     if !shaped {
         return false;
     }
@@ -462,10 +489,25 @@ mod tests {
 
     #[test]
     fn engine_env_cannot_undo_an_isolation_guarantee() {
-        for bad in ["LD_PRELOAD", "LD_LIBRARY_PATH", "HOME", "XDG_DATA_HOME", "PATH", "CORDIAL_SECRET_STORE", "CORDIAL_PROFILE_ROOT", "cordial_x", "CORDIAL-X", ""] {
+        for bad in [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "HOME",
+            "XDG_DATA_HOME",
+            "PATH",
+            "CORDIAL_SECRET_STORE",
+            "CORDIAL_PROFILE_ROOT",
+            "cordial_x",
+            "CORDIAL-X",
+            "",
+        ] {
             assert!(!allowed_engine_env(bad), "{bad:?} must be refused");
         }
-        for good in ["CORDIAL_RESOLUTION", "MIMALLOC_PURGE_DELAY", "CORDIAL_NO_VULKAN"] {
+        for good in [
+            "CORDIAL_RESOLUTION",
+            "MIMALLOC_PURGE_DELAY",
+            "CORDIAL_NO_VULKAN",
+        ] {
             assert!(allowed_engine_env(good), "{good:?}");
         }
     }
@@ -473,7 +515,16 @@ mod tests {
     #[test]
     fn resolutions() {
         assert_eq!(parse_resolution("1280x720"), Some((1280, 720)));
-        for s in ["", "x", "1280", "0x0", "99999x1", "1280X720", "-1x5", "1280x720 "] {
+        for s in [
+            "",
+            "x",
+            "1280",
+            "0x0",
+            "99999x1",
+            "1280X720",
+            "-1x5",
+            "1280x720 ",
+        ] {
             assert_eq!(parse_resolution(s), None, "{s:?}");
         }
     }
