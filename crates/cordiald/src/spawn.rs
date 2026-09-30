@@ -240,15 +240,11 @@ pub fn build(i: &Inputs<'_>) -> Result<Plan> {
         ));
     }
 
-    let (w, h) = match hrd_core::config::parse_resolution(&cfg.engine.resolution) {
-        Some(r) => r,
-        None => match i.mode {
-            ResourceMode::Compatible => (1280, 720),
-            ResourceMode::Minimal => (640, 360),
-            ResourceMode::Aggressive => (320, 180),
-        },
-    };
-    put("CORDIAL_RESOLUTION", format!("{w}x{h}"));
+    // A sign-in client is looked at by a person: it always gets the full size.
+    let env_mode = if i.kind == RunKind::Login { ResourceMode::Compatible } else { i.mode };
+    for (k, v) in mode_env(env_mode, cfg, i.build_dir) {
+        put(&k, v);
+    }
 
     if i.graphics.software {
         put("WLR_RENDERER", "pixman".into());
@@ -288,6 +284,44 @@ pub fn build(i: &Inputs<'_>) -> Result<Plan> {
         log_path: l.instance_log(a),
         devctl_socket,
     })
+}
+
+/// The settings a resource mode adds. **Every line is a concrete environment
+/// variable that some program reads**; nothing is a flag that "turns things
+/// off". docs/memory.md says, for each, which layer it touches, what it is
+/// expected to save and what is not established.
+///
+/// * all modes: `CORDIAL_GAMEMODE=0` (a server has no gamemoded; the request
+///   is a D-Bus call and a thread for nothing).
+/// * `compatible`: nothing else. The resolution is left to upstream unless
+///   `engine.resolution` is set.
+/// * `minimal`: a 640x360 render size, the shared asset mapping (needs the
+///   patched client, otherwise ignored), FIFO presentation.
+/// * `aggressive`: additionally the smallest render size `cordial-run` accepts
+///   (320x240), glibc arenas capped at two, mimalloc returning freed pages at
+///   once, and the CPU count reported to the engine capped.
+pub fn mode_env(mode: ResourceMode, cfg: &Config, build_dir: &Path) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = vec![("CORDIAL_GAMEMODE".into(), "0".into())];
+    let configured = hrd_core::config::parse_resolution(&cfg.engine.resolution);
+    let res = configured.or(match mode {
+        ResourceMode::Compatible => None,
+        ResourceMode::Minimal => Some((640, 360)),
+        ResourceMode::Aggressive => Some((320, 240)),
+    });
+    if let Some((w, h)) = res {
+        v.push(("CORDIAL_RESOLUTION".into(), format!("{w}x{h}")));
+    }
+    if mode != ResourceMode::Compatible {
+        v.push(("CORDIAL_ASSET_MMAP_DIR".into(), build_dir.join("assets").display().to_string()));
+        v.push(("CORDIAL_PRESENT_MODE".into(), "fifo".into()));
+    }
+    if mode == ResourceMode::Aggressive {
+        v.push(("MALLOC_ARENA_MAX".into(), "2".into()));
+        v.push(("MIMALLOC_PURGE_DELAY".into(), "0".into()));
+        let n = if cfg.engine.cpus_per_instance > 0 { cfg.engine.cpus_per_instance.max(2) } else { 2 };
+        v.push(("CORDIAL_NPROC".into(), n.to_string()));
+    }
+    v
 }
 
 /// Process-level settings applied between `fork` and `exec`.
@@ -499,6 +533,8 @@ mod tests {
         }
         assert!(get("XDG_RUNTIME_DIR").unwrap().ends_with("/i/alt-1"));
         assert_eq!(get("CORDIAL_SECRET_STORE").as_deref(), Some("keyring"));
+        assert_eq!(get("CORDIAL_GAMEMODE").as_deref(), Some("0"));
+        assert!(get("CORDIAL_RESOLUTION").is_none(), "compatible leaves the size to upstream");
         for bad in [
             "LD_PRELOAD",
             "LD_LIBRARY_PATH",
@@ -581,6 +617,38 @@ mod tests {
         assert!(p.args.iter().all(|s| s != "--join-url"));
         assert!(p.devctl_socket.as_ref().unwrap().to_string_lossy().len() < 100);
         assert!(p.env.iter().any(|(k, _)| k == "CORDIAL_DEV_CONTROL"));
+    }
+
+    #[test]
+    fn each_mode_adds_only_named_settings_and_compatible_adds_almost_nothing() {
+        let cfg = Config::default();
+        let b = Path::new("/b");
+        let keys = |m| mode_env(m, &cfg, b).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+        assert_eq!(keys(ResourceMode::Compatible), ["CORDIAL_GAMEMODE"]);
+        let min = mode_env(ResourceMode::Minimal, &cfg, b);
+        assert!(min.contains(&("CORDIAL_RESOLUTION".into(), "640x360".into())));
+        assert!(min.contains(&("CORDIAL_ASSET_MMAP_DIR".into(), "/b/assets".into())));
+        assert!(!min.iter().any(|(k, _)| k.starts_with("MIMALLOC") || k == "MALLOC_ARENA_MAX"));
+        let agg = mode_env(ResourceMode::Aggressive, &cfg, b);
+        assert!(agg.contains(&("CORDIAL_RESOLUTION".into(), "320x240".into())), "the smallest size cordial-run accepts");
+        for k in ["MALLOC_ARENA_MAX", "MIMALLOC_PURGE_DELAY", "CORDIAL_NPROC", "CORDIAL_ASSET_MMAP_DIR"] {
+            assert!(agg.iter().any(|(n, _)| n == k), "{k}");
+        }
+        // Every name passes the same filter operators' own engine.env does,
+        // so a mode can never set a variable the manager refuses elsewhere.
+        for m in [ResourceMode::Compatible, ResourceMode::Minimal, ResourceMode::Aggressive] {
+            for (k, _) in mode_env(m, &cfg, b) {
+                assert!(k.starts_with("CORDIAL_") || k.starts_with("MIMALLOC_") || k == "MALLOC_ARENA_MAX", "{k}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_configured_resolution_beats_the_mode() {
+        let mut cfg = Config::default();
+        cfg.engine.resolution = "800x600".into();
+        let v = mode_env(ResourceMode::Aggressive, &cfg, Path::new("/b"));
+        assert!(v.contains(&("CORDIAL_RESOLUTION".into(), "800x600".into())));
     }
 
     #[test]

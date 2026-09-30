@@ -1,0 +1,46 @@
+Subject: CORDIAL_NPROC lowers the CPU count the engine is told
+
+bionic _SC_NPROCESSORS_CONF/_ONLN are answered from glibc; with CORDIAL_NPROC=N
+they are answered min(real, N). It never raises the count. Whether the closed
+engine sizes its worker pool from this is inferred from upstream's notes, not
+observed.
+
+--- a/crates/cordial-runtime/src/bionic/mod.rs
++++ b/crates/cordial-runtime/src/bionic/mod.rs
+@@ -507,6 +507,17 @@
+     fn sysconf(name: c_int) -> i64;
+ }
+ 
++/// `CORDIAL_NPROC`, read once: a positive integer, anything else is ignored.
++fn nproc_cap() -> Option<i64> {
++    static CAP: std::sync::OnceLock<Option<i64>> = std::sync::OnceLock::new();
++    *CAP.get_or_init(|| {
++        std::env::var("CORDIAL_NPROC")
++            .ok()
++            .and_then(|v| v.trim().parse::<i64>().ok())
++            .filter(|n| *n >= 1)
++    })
++}
++
+ /// bionic's `sysconf`, translated.
+ ///
+ /// The selectors are not shared: bionic's `_SC_PAGESIZE` is 39, glibc's is 30,
+@@ -520,7 +531,17 @@
+         .find(|(bionic, _, _)| *bionic == name)
+     {
+         // SAFETY: `glibc` came from the generated table and is a valid selector.
+-        return unsafe { sysconf(glibc) };
++        let value = unsafe { sysconf(glibc) };
++        // bionic's `_SC_NPROCESSORS_CONF` (96) and `_SC_NPROCESSORS_ONLN` (97).
++        // Fleet-manager patch: `CORDIAL_NPROC=N` lowers what the engine is told
++        // about the CPU count (never raises it). Whether the engine sizes its
++        // worker pool from this is inferred, not observed.
++        if name == 96 || name == 97 {
++            if let Some(cap) = nproc_cap() {
++                return value.min(cap);
++            }
++        }
++        return value;
+     }
+ 
+     if let Some((_, sym)) = sysconf_table::UNSUPPORTED

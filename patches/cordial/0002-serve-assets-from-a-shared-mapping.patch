@@ -1,0 +1,178 @@
+Subject: Serve assets from a mapping of the extracted tree when one is named
+
+CORDIAL_ASSET_MMAP_DIR names a directory holding the APK's assets already
+extracted (cordial-import makes one per build, sealed read-only). A read is then
+served from a MAP_PRIVATE mapping of that file instead of a decompressed copy in
+a leaked, process-private buffer: the pages are the page cache's, shared between
+clients and reclaimable while clean. The mapping is never unmapped, so the
+pointer AAsset_getBuffer returned stays valid for the life of the process, which
+is the contract Vec::leak gave. A size that differs from the APK entry, a
+symlink, or a name that leaves the tree falls back to reading the APK.
+Unset, nothing changes. Includes a test run against a real mapping.
+
+--- a/crates/cordial-runtime/src/android/asset.rs
++++ b/crates/cordial-runtime/src/android/asset.rs
+@@ -137,7 +137,76 @@
+     cache: Mutex<HashMap<String, &'static [u8]>>,
+ }
+ 
++/// Directory of pre-extracted assets, from `CORDIAL_ASSET_MMAP_DIR`. Read once.
++fn mapped_root() -> Option<&'static Path> {
++    static ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
++    ROOT.get_or_init(|| {
++        let p = PathBuf::from(std::env::var_os("CORDIAL_ASSET_MMAP_DIR")?);
++        (p.is_absolute() && p.is_dir()).then_some(p)
++    })
++    .as_deref()
++}
++
++extern "C" {
++    fn mmap(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, off: i64) -> *mut c_void;
++}
++
+ impl Manager {
++    /// `assets/<name>` as a mapping of the extracted copy, or `None` to fall
++    /// back to reading the APK.
++    ///
++    /// **Lifetime.** The mapping is never unmapped, which is the same contract
++    /// `Vec::leak` gave: `AAsset_getBuffer`'s pointer stays valid after the
++    /// asset is closed, for the life of the process, so a caller that keeps it
++    /// cannot be left with a dangling one. What changes is whose memory it is:
++    /// `MAP_PRIVATE` over a file, so untouched pages are the page cache's (shared
++    /// between clients, reclaimable when clean) and only a page the engine writes
++    /// becomes the process's own, copy-on-write, exactly as a write to the old
++    /// buffer would have been.
++    ///
++    /// **Checks.** The name must be a plain relative path (no `..`, no root);
++    /// the file must be a regular file, not a symlink; its length must equal the
++    /// APK entry's uncompressed size. Anything else returns `None` and the APK is
++    /// read as before, so a stale or tampered tree cannot silently substitute a
++    /// differently sized asset. The contents are not re-hashed per read: the tree
++    /// is verified when it is installed (`cordial-import verify`).
++    fn map_extracted(&self, name: &str) -> Option<&'static [u8]> {
++        use std::os::fd::AsRawFd;
++        use std::path::Component;
++        let root = mapped_root()?;
++        let rel = Path::new(name);
++        if name.is_empty() || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
++            return None;
++        }
++        let path = root.join(rel);
++        let md = std::fs::symlink_metadata(&path).ok()?;
++        if !md.file_type().is_file() {
++            return None;
++        }
++        let len = md.len();
++        let want = {
++            let mut zip = self.archive()?;
++            let entry = zip.by_name(&format!("assets/{name}")).ok()?;
++            entry.size()
++        };
++        if want != len {
++            return None;
++        }
++        if len == 0 {
++            return Some(&[]);
++        }
++        let file = File::open(&path).ok()?;
++        // SAFETY: a fresh mapping of `len` bytes of a file this process just
++        // opened; the result is checked against MAP_FAILED before use.
++        let ptr = unsafe { mmap(std::ptr::null_mut(), len as usize, 3 /* PROT_READ|PROT_WRITE */, 2 /* MAP_PRIVATE */, file.as_raw_fd(), 0) };
++        if ptr as isize == -1 {
++            return None;
++        }
++        // SAFETY: the mapping is `len` bytes, is never unmapped (so `'static`
++        // holds), and is only ever handed out as shared bytes.
++        Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) })
++    }
++
+     /// A private archive handle sharing the one parsed central directory, or
+     /// `None` if the APK could not be read.
+     fn archive(&self) -> Option<zip::ZipArchive<ApkReader>> {
+@@ -248,6 +317,21 @@
+             }
+         }
+ 
++        // Fleet-manager patch. When `CORDIAL_ASSET_MMAP_DIR` names a tree that
++        // holds the same assets already extracted (the importer makes one per
++        // installed build), serve the bytes from a mapping of that file instead
++        // of decompressing them into a private, never-freed buffer. The pages
++        // are file-backed: every client mapping the same file shares them, and
++        // the kernel can reclaim the clean ones. See `map_extracted`.
++        if let Some(mapped) = self.map_extracted(name) {
++            if trace_assets_enabled() {
++                eprintln!("[asset] hit (mapped): {name}");
++            }
++            record(name, Served::Apk);
++            self.cache.lock().ok()?.insert(name.to_string(), mapped);
++            return Some(mapped);
++        }
++
+         let Some(bytes) = (|| -> Option<Vec<u8>> {
+             // `archive()` parses the central directory once for the process
+             // and hands back a clone that shares it; this used to open the
+@@ -2030,3 +2114,64 @@
+         unregister_plugin_root("retro-ui");
+     }
+ }
++
++#[cfg(test)]
++mod mapped_tests {
++    use super::*;
++
++    /// Run alone (`cargo test -p cordial-runtime mapped_assets -- --test-threads=1`):
++    /// the extracted-tree root is read from the environment once per process.
++    #[test]
++    fn mapped_assets_come_from_the_extracted_tree_and_are_checked() {
++        let dir = std::env::temp_dir().join(format!("cordial-mapped-test-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&dir);
++        let tree = dir.join("tree");
++        std::fs::create_dir_all(tree.join("sub")).unwrap();
++        let apk = dir.join("base.apk");
++        {
++            let mut out = Vec::new();
++            {
++                let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
++                let opts: zip::write::FileOptions<'_, ()> =
++                    zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
++                for (n, c) in [("assets/a.txt", &b"hello hello hello hello"[..]), ("assets/sub/b.bin", &b"0123456789"[..]), ("assets/empty", &b""[..]), ("assets/wrong", &b"four"[..]), ("assets/link", &b"target"[..])] {
++                    w.start_file(n, opts).unwrap();
++                    std::io::Write::write_all(&mut w, c).unwrap();
++                }
++                w.finish().unwrap();
++            }
++            std::fs::write(&apk, out).unwrap();
++        }
++        std::fs::write(tree.join("a.txt"), b"hello hello hello hello").unwrap();
++        std::fs::write(tree.join("sub/b.bin"), b"0123456789").unwrap();
++        std::fs::write(tree.join("empty"), b"").unwrap();
++        std::fs::write(tree.join("wrong"), b"fourteen bytes!").unwrap(); // size differs from the APK entry
++        std::fs::write(dir.join("outside"), b"target").unwrap();
++        std::os::unix::fs::symlink(dir.join("outside"), tree.join("link")).unwrap();
++        std::env::set_var("CORDIAL_ASSET_MMAP_DIR", &tree);
++
++        let m = Manager { apk: apk.clone(), archive: OnceLock::new(), cache: Mutex::new(HashMap::new()) };
++        let a = m.read("a.txt").unwrap();
++        assert_eq!(a, b"hello hello hello hello");
++        assert_eq!(m.read("sub/b.bin").unwrap(), b"0123456789");
++        assert_eq!(m.read("empty").unwrap(), b"");
++        // Served from a mapping of the tree, not from a heap copy.
++        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
++        assert!(maps.lines().any(|l| l.ends_with("/tree/a.txt")), "a.txt is not mapped:\n{maps}");
++        // A second read returns the same pointer (cached), still valid.
++        assert_eq!(m.read("a.txt").unwrap().as_ptr(), a.as_ptr());
++        // A size mismatch falls back to the APK's own bytes.
++        assert_eq!(m.read("wrong").unwrap(), b"four");
++        // A symlink in the tree is never followed; the APK answers.
++        assert_eq!(m.read("link").unwrap(), b"target");
++        assert!(!std::fs::read_to_string("/proc/self/maps").unwrap().lines().any(|l| l.ends_with("/tree/link") || l.ends_with("/outside")));
++        // Names that try to leave the tree are refused by the mapped path.
++        assert!(m.map_extracted("../outside").is_none());
++        assert!(m.map_extracted("/etc/passwd").is_none());
++        // A write to a mapped buffer must not reach the file (MAP_PRIVATE).
++        // SAFETY: the test writes one byte inside the mapping it owns.
++        unsafe { *(a.as_ptr() as *mut u8) = b'J' };
++        assert_eq!(std::fs::read(tree.join("a.txt")).unwrap(), b"hello hello hello hello");
++        std::fs::remove_dir_all(dir).ok();
++    }
++}

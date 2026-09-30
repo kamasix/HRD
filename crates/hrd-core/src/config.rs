@@ -542,11 +542,12 @@ impl Config {
     }
 }
 
-/// `WIDTHxHEIGHT` within what a swapchain can sensibly be.
+/// `WIDTHxHEIGHT` within what `cordial-run` accepts (it falls back to 1280x720
+/// for anything under 320x240).
 pub fn parse_resolution(s: &str) -> Option<(u32, u32)> {
     let (w, h) = s.split_once('x')?;
     let (w, h): (u32, u32) = (w.parse().ok()?, h.parse().ok()?);
-    ((16..=7680).contains(&w) && (16..=4320).contains(&h)).then_some((w, h))
+    ((320..=7680).contains(&w) && (240..=4320).contains(&h)).then_some((w, h))
 }
 
 /// The environment names an operator may pass to a client. Anything else could
@@ -638,11 +639,14 @@ mod tests {
     #[test]
     fn resolutions() {
         assert_eq!(parse_resolution("1280x720"), Some((1280, 720)));
+        assert_eq!(parse_resolution("320x240"), Some((320, 240)));
         for s in [
             "",
             "x",
             "1280",
             "0x0",
+            "319x240",
+            "320x239",
             "99999x1",
             "1280X720",
             "-1x5",

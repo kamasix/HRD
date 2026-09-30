@@ -1,0 +1,29 @@
+Subject: Accept the join link in CORDIAL_JOIN_URL as well as --join-url
+
+A private-server code in the arguments is readable by every local user in
+/proc/<pid>/cmdline. The environment of a process is readable only by its owner.
+The variable is removed as soon as it is read. The argument wins if both are set.
+Without this patch the variable is ignored and the client does not join.
+
+--- a/crates/cordial-runtime/src/bin/load.rs
++++ b/crates/cordial-runtime/src/bin/load.rs
+@@ -309,6 +309,19 @@
+             other => return Err(format!("unrecognised argument: {other}")),
+         }
+     }
++    // `CORDIAL_JOIN_URL` (fleet-manager patch): the same link as `--join-url`,
++    // handed over in the environment so that a private-server code does not sit
++    // in `/proc/<pid>/cmdline`, which every local user can read. The argument
++    // wins if both are given. The variable is removed as soon as it is read so
++    // that processes the client starts do not inherit it.
++    if let Some(raw) = std::env::var_os("CORDIAL_JOIN_URL") {
++        std::env::remove_var("CORDIAL_JOIN_URL");
++        if opt.join_url.is_none() && !raw.is_empty() {
++            let raw = raw.into_string().map_err(|_| "CORDIAL_JOIN_URL is not valid UTF-8".to_string())?;
++            opt.join_url = Some(cordial_runtime::deeplink::validate(&raw)?);
++            cordial_runtime::android::looper::note_join_requested();
++        }
++    }
+     if opt.lib_dir.is_empty() {
+         return Err("--lib-dir is required".into());
+     }
