@@ -128,7 +128,7 @@ impl Default for SchedulerCfg {
     fn default() -> Self {
         SchedulerCfg {
             max_instances: 300,
-            max_concurrent_starts: 2,
+            max_concurrent_starts: 0,
             min_start_interval_ms: 3000,
             start_timeout_s: 300,
             join_timeout_s: 300,
@@ -666,8 +666,31 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_example_parses_and_says_what_the_defaults_say() {
+        // max_concurrent_starts is 0 (auto) in the example and 2 in the defaults.
+        let text = include_str!("../../../config/cordiald.toml.example");
+        let c: Config =
+            toml::from_str(text).expect("the example must be valid TOML with known keys");
+        c.validate().unwrap();
+        let d = Config::default();
+        assert_eq!(c.scheduler.max_instances, d.scheduler.max_instances);
+        assert_eq!(
+            c.scheduler.disconnect_grace_s,
+            d.scheduler.disconnect_grace_s
+        );
+        assert_eq!(c.resources.default_mode, d.resources.default_mode);
+        assert_eq!(c.engine.graphics, d.engine.graphics);
+        assert_eq!(c.engine.cordial_run, d.engine.cordial_run);
+        assert_eq!(c.login.timeout_s, d.login.timeout_s);
+        assert!(!c.network.allow_unrouted);
+    }
+
+    #[test]
     fn a_missing_file_gives_the_defaults() {
         let c = Config::load(Path::new("/nonexistent/cordiald.toml")).unwrap();
-        assert_eq!(c.scheduler.max_concurrent_starts, 2);
+        assert_eq!(
+            c.scheduler.max_concurrent_starts, 0,
+            "0 means: choose from the machine"
+        );
     }
 }

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+case "$1" in
+configure)
+    systemd-sysusers /usr/lib/sysusers.d/cordial-hrd.conf
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cordial-hrd.conf
+    # The entry wrapper is the only program with a file capability, and only the
+    # service group may run it.
+    chown root:cordial /usr/lib/cordial-hrd/cordial-enter
+    chmod 0750 /usr/lib/cordial-hrd/cordial-enter
+    setcap cap_sys_admin+ep /usr/lib/cordial-hrd/cordial-enter
+    # A machine with a GPU: let the service user open the render node.
+    if ls /dev/dri/renderD* >/dev/null 2>&1 && getent group render >/dev/null; then
+        adduser --quiet cordial render || true
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    cat <<MSG
+cordial-hrd is installed. Nothing has been started or changed.
+  1. sudo cordialctl init            (writes /etc/cordial-hrd/cordiald.toml, checks the machine)
+  2. sudo systemctl enable --now cordial-netd cordiald
+  3. cordialctl secrets unlock --create
+  4. cordialctl runtime import --apk /path/to/roblox.apk
+See /usr/share/doc/cordial-hrd/install.md
+MSG
+    ;;
+esac
+exit 0

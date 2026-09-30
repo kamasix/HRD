@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove|purge)
+    # Release this project's network namespaces (and with them the tunnels and
+    # firewall tables inside them). Only files under its own directory; idempotent.
+    if [ -d /run/cordial-hrd-netns ]; then
+        for f in /run/cordial-hrd-netns/*; do
+            [ -e "$f" ] && umount "$f" 2>/dev/null || true
+        done
+        rm -rf /run/cordial-hrd-netns
+    fi
+    ;;
+esac
+case "$1" in
+purge)
+    # State includes the registry, every account's profile and the encrypted
+    # keyring: purge deletes them. `apt remove` keeps them.
+    rm -rf /var/lib/cordial-hrd /var/log/cordial-hrd /var/lib/cordial-hrd-netd /run/cordial-hrd /etc/cordial-hrd
+    ;;
+esac
+systemctl daemon-reload >/dev/null 2>&1 || true
+exit 0

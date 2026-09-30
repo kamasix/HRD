@@ -1,0 +1,96 @@
+# Installing on Debian
+
+Target: **Debian 13 (trixie), amd64**, used over SSH, no desktop. Debian 12 and
+arm64 build but are not the tested target.
+
+## 1. Packages
+
+The manager package and the client package are separate because the client needs
+the GTK stack and is built from a different source tree ([build.md](build.md)).
+
+```
+sudo apt install ./cordial-hrd_<version>_amd64.deb ./cordial-hrd-client_<version>_amd64.deb
+sudo apt install cage mesa-vulkan-drivers        # the nested compositor; CPU Vulkan for servers without a GPU
+```
+
+`cordial-hrd` depends on systemd, iproute2, nftables, wireguard-tools, dbus-daemon,
+gnome-keyring, libcap2-bin. **Installing starts nothing**: no service, no client,
+no network change; the post-install message lists the next steps. No Fedora
+package names are used.
+
+The client needs: `libgtk-4-1` (4.12 or newer), `libadwaita-1-0` (1.5 or newer),
+`libvulkan1`, `libcurl3t64-gnutls`/`libcurl3-gnutls`, `libwayland-client0`,
+`libwayland-egl1`, `libxkbcommon0`, `libcairo2`, `libpango-1.0-0` and what they
+pull in; the client package computes exact dependencies with `dpkg-shlibdeps`.
+
+## 2. First start
+
+```
+sudo cordialctl init                                  # config skeleton, checks, nothing started
+sudo systemctl enable --now cordial-netd cordiald
+sudo adduser "$USER" cordial                          # to use cordialctl without sudo (log in again)
+cordialctl doctor                                     # read every FAIL
+cordialctl secrets unlock --create                    # new passphrase, 12+ characters
+```
+
+Edit `/etc/cordial-hrd/cordiald.toml` (annotated example in
+`/usr/share/doc/cordial-hrd/cordiald.toml.example`); `cordiald --check-config`
+validates it. Settings can also be changed at run time with `cordialctl config set`.
+
+After every **reboot** the keyring is locked: `cordialctl secrets unlock`. Clients
+cannot start until you do.
+
+## 3. The Roblox build
+
+The manager never downloads Roblox. Get the Android build yourself (base APK, and
+for a split build the engine split for your CPU):
+
+```
+cordialctl runtime import --apk ~/roblox/      # a directory of APKs, or several --apk PATH
+cordialctl runtime list
+```
+
+The importer stages private copies, checks every archive is one consistent build
+(package name, version code, split relations), verifies the signature against the
+certificate pinned in upstream Cordial and that the certificate contains the key
+that signed, extracts the engine library and the assets with no path traversal or
+symlinks, publishes by one atomic rename into a sealed read-only store, writes the
+version and provenance, and checks that the result passes the check `cordial-run`
+itself will make. Nothing is published unless all of it passes. `runtime use
+VERSION` selects another installed build (running clients keep theirs). The APK is
+read once, installed once, and used by every client as unchanging files.
+
+## 4. Accounts, network, go
+
+```
+cordialctl account add alt-01 ; cordialctl account login alt-01
+sudo cordialctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
+cordialctl group create g01 --network de-1 --capacity 20
+cordialctl group assign g01 --accounts g01.txt
+cordialctl network plan && cordialctl network apply
+cordialctl group start g01 --place-id 1234567890
+cordialctl status ; cordialctl stats ; cordialctl tui
+```
+
+Place ids, account names and addresses are yours; none is built in. See
+[operations.md](operations.md) for running it day to day.
+
+## Updating
+
+Install the new `.deb`. The daemon is not restarted by the upgrade's file copy;
+`sudo systemctl restart cordiald` does it, and **running clients keep running**
+(the service is `KillMode=process`; the new daemon adopts them and re-derives
+their state from their logs). Protocol mismatches between `cordialctl` and
+`cordiald` are reported, not guessed around.
+
+## Removing
+
+```
+cordialctl stop-all
+sudo apt remove cordial-hrd          # keeps /var/lib/cordial-hrd (accounts, keyring) and /etc/cordial-hrd
+sudo apt purge cordial-hrd           # deletes them, including stored sessions and WireGuard keys
+```
+
+Removal releases this project's network namespaces (and with them the tunnels and
+firewall tables inside) and touches nothing else. To undo the gateway, follow the
+`README-gateway.txt` that `gateway plan` wrote.

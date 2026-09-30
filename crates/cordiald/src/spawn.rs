@@ -241,7 +241,11 @@ pub fn build(i: &Inputs<'_>) -> Result<Plan> {
     }
 
     // A sign-in client is looked at by a person: it always gets the full size.
-    let env_mode = if i.kind == RunKind::Login { ResourceMode::Compatible } else { i.mode };
+    let env_mode = if i.kind == RunKind::Login {
+        ResourceMode::Compatible
+    } else {
+        i.mode
+    };
     for (k, v) in mode_env(env_mode, cfg, i.build_dir) {
         put(&k, v);
     }
@@ -312,13 +316,20 @@ pub fn mode_env(mode: ResourceMode, cfg: &Config, build_dir: &Path) -> Vec<(Stri
         v.push(("CORDIAL_RESOLUTION".into(), format!("{w}x{h}")));
     }
     if mode != ResourceMode::Compatible {
-        v.push(("CORDIAL_ASSET_MMAP_DIR".into(), build_dir.join("assets").display().to_string()));
+        v.push((
+            "CORDIAL_ASSET_MMAP_DIR".into(),
+            build_dir.join("assets").display().to_string(),
+        ));
         v.push(("CORDIAL_PRESENT_MODE".into(), "fifo".into()));
     }
     if mode == ResourceMode::Aggressive {
         v.push(("MALLOC_ARENA_MAX".into(), "2".into()));
         v.push(("MIMALLOC_PURGE_DELAY".into(), "0".into()));
-        let n = if cfg.engine.cpus_per_instance > 0 { cfg.engine.cpus_per_instance.max(2) } else { 2 };
+        let n = if cfg.engine.cpus_per_instance > 0 {
+            cfg.engine.cpus_per_instance.max(2)
+        } else {
+            2
+        };
         v.push(("CORDIAL_NPROC".into(), n.to_string()));
     }
     v
@@ -534,7 +545,10 @@ mod tests {
         assert!(get("XDG_RUNTIME_DIR").unwrap().ends_with("/i/alt-1"));
         assert_eq!(get("CORDIAL_SECRET_STORE").as_deref(), Some("keyring"));
         assert_eq!(get("CORDIAL_GAMEMODE").as_deref(), Some("0"));
-        assert!(get("CORDIAL_RESOLUTION").is_none(), "compatible leaves the size to upstream");
+        assert!(
+            get("CORDIAL_RESOLUTION").is_none(),
+            "compatible leaves the size to upstream"
+        );
         for bad in [
             "LD_PRELOAD",
             "LD_LIBRARY_PATH",
@@ -623,22 +637,46 @@ mod tests {
     fn each_mode_adds_only_named_settings_and_compatible_adds_almost_nothing() {
         let cfg = Config::default();
         let b = Path::new("/b");
-        let keys = |m| mode_env(m, &cfg, b).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+        let keys = |m| {
+            mode_env(m, &cfg, b)
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(keys(ResourceMode::Compatible), ["CORDIAL_GAMEMODE"]);
         let min = mode_env(ResourceMode::Minimal, &cfg, b);
         assert!(min.contains(&("CORDIAL_RESOLUTION".into(), "640x360".into())));
         assert!(min.contains(&("CORDIAL_ASSET_MMAP_DIR".into(), "/b/assets".into())));
-        assert!(!min.iter().any(|(k, _)| k.starts_with("MIMALLOC") || k == "MALLOC_ARENA_MAX"));
+        assert!(!min
+            .iter()
+            .any(|(k, _)| k.starts_with("MIMALLOC") || k == "MALLOC_ARENA_MAX"));
         let agg = mode_env(ResourceMode::Aggressive, &cfg, b);
-        assert!(agg.contains(&("CORDIAL_RESOLUTION".into(), "320x240".into())), "the smallest size cordial-run accepts");
-        for k in ["MALLOC_ARENA_MAX", "MIMALLOC_PURGE_DELAY", "CORDIAL_NPROC", "CORDIAL_ASSET_MMAP_DIR"] {
+        assert!(
+            agg.contains(&("CORDIAL_RESOLUTION".into(), "320x240".into())),
+            "the smallest size cordial-run accepts"
+        );
+        for k in [
+            "MALLOC_ARENA_MAX",
+            "MIMALLOC_PURGE_DELAY",
+            "CORDIAL_NPROC",
+            "CORDIAL_ASSET_MMAP_DIR",
+        ] {
             assert!(agg.iter().any(|(n, _)| n == k), "{k}");
         }
         // Every name passes the same filter operators' own engine.env does,
         // so a mode can never set a variable the manager refuses elsewhere.
-        for m in [ResourceMode::Compatible, ResourceMode::Minimal, ResourceMode::Aggressive] {
+        for m in [
+            ResourceMode::Compatible,
+            ResourceMode::Minimal,
+            ResourceMode::Aggressive,
+        ] {
             for (k, _) in mode_env(m, &cfg, b) {
-                assert!(k.starts_with("CORDIAL_") || k.starts_with("MIMALLOC_") || k == "MALLOC_ARENA_MAX", "{k}");
+                assert!(
+                    k.starts_with("CORDIAL_")
+                        || k.starts_with("MIMALLOC_")
+                        || k == "MALLOC_ARENA_MAX",
+                    "{k}"
+                );
             }
         }
     }

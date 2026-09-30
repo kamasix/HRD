@@ -1,0 +1,82 @@
+# Running it
+
+Everything is `cordialctl` over SSH. `--json` on any command prints JSON for
+scripts; exit codes: 0 ok, 1 error, 2 bad usage or invalid input, 3 not found,
+4 conflict, 5 unavailable (daemon, helper, runtime, secret store, network not
+ready), 6 authentication required, 7 permission denied.
+
+## A session, start to end
+
+```
+cordialctl secrets status                # ready? after a reboot: secrets unlock
+cordialctl doctor                        # anything FAIL?
+cordialctl group start g01 --place-id 1234567890
+cordialctl status --live                 # queued -> starting -> joining -> connected
+cordialctl stats
+cordialctl instance stop alt-07          # polite stop, then the whole process set is ended
+cordialctl stop-all
+```
+
+`group start` only **queues**. The scheduler admits one start when: fewer than
+`max_concurrent_starts` are in flight (0 = chosen from the machine), the minimum
+interval has passed, free memory minus what the starts in flight are still
+expected to add stays above `min_available_mem_mib`, and memory and CPU pressure
+are below their limits. The queue position and the reason a start is waiting are
+shown by `queue list`. `queue cancel --all` empties it. Stopping the daemon does
+not restore a queue; it is an instruction to a daemon that is gone.
+
+## What each state means and what to do
+
+| state | meaning | you |
+|---|---|---|
+| `configured` | registered, never started | `instance start` |
+| `auth_required` | no usable session, or a client reached the sign-in screen; the reason says which | `account login` |
+| `queued` | waiting for a start slot | wait, or `queue cancel` |
+| `starting` | process set exists, engine not yet at its first screen | wait; after `start_timeout_s` it becomes `failed` |
+| `joining` | signed in, the join was requested, the client has not said it is in the game | wait; `join_timeout_s` |
+| `connected` | the client printed that it joined a place. Only this line moves an instance here | - |
+| `disconnected` | the engine reported a disconnection that was not followed by a new join, or the client left, or its process ended after being connected. The reason and the engine's reason code are recorded; **the process set is already released and nothing restarts it** | `instance show`, then `instance start` if you want it again |
+| `stopped` | you stopped it (or cancelled it while queued) | - |
+| `failed` | could not start, crashed before joining, was killed by the kernel for memory, or timed out; the reason says which (exit 3 is "profile locked by another process") | `logs`, `instance show` |
+| `unknown` | a process exists but nothing it said settles the question, or the run could not be re-derived after a manager restart | `instance show`; stop and start it |
+
+`connected` does **not** mean the game is healthy; it means the client reported
+joining. A reason code on a disconnect (`Disconnection Notification. Reason: N`)
+is Roblox's; the manager records it and does not interpret it.
+
+## A restart of the daemon
+
+`systemctl restart cordiald` leaves clients running. The new daemon finds each live
+process set, re-reads the client's log from the run's banner, and continues. Queued
+starts are dropped. A run whose processes are gone is closed as ended with an
+unobserved exit status. The keyring keeps running across a daemon restart.
+
+## Sizing
+
+Start small and look: `cordialctl stats` (PSS and pressure), then raise
+`scheduler.max_instances` and start more groups. 300 is the manager's ceiling,
+not a prediction for the machine ([memory.md](memory.md), [gpu-less.md](gpu-less.md)).
+Stop before the machine swaps or the OOM killer chooses for you: clients have
+`oom_score_adj = 300`, the daemon -500, so a squeeze kills a client first.
+
+## Automation
+
+```
+cordialctl --json status --state connected | jq -r '.[].id'
+cordialctl --json status | jq '[.[] | .state] | group_by(.) | map({(.[0]): length}) | add'
+```
+
+Errors in JSON mode are `{"ok":false,"error":{"code":...,"message":...}}` on
+standard output with a non-zero exit status.
+
+## Troubleshooting
+
+| symptom | look at |
+|---|---|
+| `cannot connect to control.sock` | `systemctl status cordiald`; are you in the `cordial` group? |
+| start refused: secret store | `cordialctl secrets status`, then `secrets unlock` |
+| start refused: network not usable | `network list` (state and reason), `network plan`, `network apply` |
+| `failed` right after start | `instance show ID`, `logs ID`; `doctor` for a missing `cage` / Vulkan / client binary |
+| many `failed` at once under load | `stats`: memory pressure; raise `min_available_mem_mib`, lower `max_instances` |
+| a group's clients all `disconnected` | `network list`: handshake age; `network check`; the gateway (docs/gateway.md) |
+| `doctor` says processes are tracked by process group | the service is not running with `Delegate=yes`, or cgroup v2 is missing |

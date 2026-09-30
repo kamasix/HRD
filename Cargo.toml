@@ -9,6 +9,7 @@ members = [
     "crates/cordiald",
     "crates/cordial-netd",
     "crates/cordial-enter",
+    "crates/cordial-panel",
 ]
 # Upstream Cordial lives in third_party/cordial and is a workspace of its own.
 # Nothing under it is a member of this workspace; the two halves meet through

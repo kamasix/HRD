@@ -1,0 +1,61 @@
+[Unit]
+Description=Cordial fleet manager (starts no clients by itself)
+Documentation=file:///usr/share/doc/cordial-hrd/install.md
+After=network.target cordial-netd.service
+Wants=cordial-netd.service
+
+[Service]
+Type=exec
+User=cordial
+Group=cordial
+ExecStart=/usr/bin/cordiald
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+# Clients are children of this service. Restarting or stopping the daemon must not
+# kill them: the next daemon finds them again (by cgroup) and carries on.
+KillMode=process
+TimeoutStopSec=60
+
+# The daemon gives each client its own cgroup below its own, and ends a client by
+# emptying that cgroup, so it needs the subtree delegated to it.
+Delegate=yes
+
+# 300 clients of ~70 threads each is far above the default 15% task limit.
+TasksMax=infinity
+LimitNOFILE=524288
+# The manager should outlive a memory squeeze that kills a client.
+OOMScoreAdjust=-500
+MemoryAccounting=yes
+CPUAccounting=yes
+TasksAccounting=yes
+
+# --- hardening -------------------------------------------------------------
+# NoNewPrivileges is deliberately NOT set: a client enters its network
+# namespace through cordial-enter, a program with one file capability
+# (cap_sys_admin), and no_new_privs would stop that capability from being
+# granted. What bounds it instead: the capability bounding set below contains
+# only CAP_SYS_ADMIN, so no other file capability anywhere under this service
+# can take effect, and cordial-enter drops everything before it runs a client.
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cordial-hrd /var/log/cordial-hrd /run/cordial-hrd
+ProtectHome=yes
+PrivateTmp=yes
+ProtectProc=invisible
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+# The engine maps executable memory; MemoryDenyWriteExecute must stay off.
+# /dev/dri must stay visible for machines with a GPU.
+
+[Install]
+WantedBy=multi-user.target
