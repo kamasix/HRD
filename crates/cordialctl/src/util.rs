@@ -134,9 +134,9 @@ mod tests {
             &[1],
         );
         let lines: Vec<&str> = t.lines().collect();
-        assert_eq!(lines[0], "ID       RSS");
-        assert_eq!(lines[1], "alt-1   12.5");
-        assert_eq!(lines[2], "b     1234.0");
+        assert_eq!(lines[0], "ID        RSS");
+        assert_eq!(lines[1], "alt-1    12.5");
+        assert_eq!(lines[2], "b       1234.0");
         assert_eq!(mib(None), "-");
         assert_eq!(mib_long(None), "not measured");
         assert!(mib_long(Some(1048576)).starts_with("1.0 MiB"));
