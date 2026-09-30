@@ -1,0 +1,3 @@
+[submodule "third_party/cordial"]
+	path = third_party/cordial
+	url = https://github.com/luohoa97/cordial

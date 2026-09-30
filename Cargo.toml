@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hrd-core",
+    "crates/hrd-proc",
+    "crates/hrd-net",
+    "crates/cordialctl",
+    "crates/cordiald",
+    "crates/cordial-netd",
+    "crates/cordial-enter",
+]
+# Upstream Cordial lives in third_party/cordial and is a workspace of its own.
+# Nothing under it is a member of this workspace; the two halves meet through
+# the pinned submodule and the patch queue in patches/cordial/, never through a
+# shared target/ (upstream's AGENTS.md explains why two builds must not share
+# one).
+exclude = ["third_party"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+rustix = { version = "1.1", default-features = false, features = ["std"] }
+libc = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+# The manager's resident size is one of the things this project measures, so the
+# release profile spends build time on it: one codegen unit, LTO, no unwinding
+# tables for panics (a panic in the daemon is a bug to be restarted by systemd,
+# not recovered from), symbols stripped by the packaging step rather than here so
+# that a backtrace from a local build stays readable.
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false

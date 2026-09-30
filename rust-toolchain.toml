@@ -1,0 +1,10 @@
+# Pinned so a build is reproducible: the versions in Cargo.lock were resolved
+# and compiled against exactly this compiler. Debian 13 ships an older rustc in
+# its archive; build with rustup, as docs/build.md describes, rather than the
+# distribution's compiler.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]
+# `cordial-enter` is linked statically against musl, see its Cargo.toml.
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+profile = "minimal"

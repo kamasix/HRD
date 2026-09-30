@@ -1,0 +1,13 @@
+/target/
+/build/
+**/*.rs.bk
+*.deb
+*.log
+# Never commit anything that came from a Roblox APK, an account or a key.
+*.apk
+*.xapk
+*.apks
+libroblox.so
+*.key
+*.keyring
+/dist/
