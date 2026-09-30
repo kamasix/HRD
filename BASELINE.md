@@ -99,8 +99,15 @@ answers the engine's imports as *cordial*, *host* (glibc) or *stub*, stands up
    (`apk_signature.rs:500-610`; upstream's own spec,
    `docs/design/fetching-the-roblox-build.md:473-480`, requires the check).
    An archive carrying Roblox's public certificate and signed with any other key
-   passes `verify_signed_by`. `hrd-import` adds the missing comparison
-   (certificate SPKI == record public key) and treats its absence as a refusal.
+   passes `verify_signed_by`. **Reproduced** (not only read): the test
+   `binding::tests::a_pinned_certificate_on_a_block_signed_by_another_key_passes_upstream_and_fails_here`
+   in `hrd-import` builds a small synthetic APK with a genuine v2 block, signed
+   with an ephemeral key, whose embedded certificate wraps a *different*
+   key; upstream's `verify_signed_by`, given that certificate's fingerprint as
+   the pin, returns `Ok`. (A synthetic archive, not Roblox's; it proves the
+   check is missing, not that any real build is forged.) `hrd-import` adds the
+   missing comparison (certificate SPKI == record public key) for every signer
+   and treats a mismatch as a refusal.
 9. **Upstream's store is not safe to share as-is.** `keep_archives` hard-links
    under the source file's name, `.content-sha256` is never read, verify and
    extract re-open the path (TOCTOU for a same-user writer), the launcher

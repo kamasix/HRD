@@ -4,6 +4,7 @@ members = [
     "crates/hrd-core",
     "crates/hrd-proc",
     "crates/hrd-net",
+    "crates/hrd-import",
     "crates/cordialctl",
     "crates/cordiald",
     "crates/cordial-netd",

@@ -1,0 +1,34 @@
+[package]
+name = "hrd-import"
+description = "Importing a Roblox Android build into the shared, immutable runtime store: staged copies, signature and key binding, safe extraction, atomic publication"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cordial-import"
+path = "src/main.rs"
+
+[dependencies]
+hrd-core = { path = "../hrd-core" }
+serde.workspace = true
+serde_json.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "std"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Upstream's own APK inspection, signature verification, engine-version scan and
+# cache stamp, used from the pinned submodule rather than re-implemented. The
+# crate is GTK-free; it brings an HTTP client with it that this binary never
+# calls, which is why the importer is a separate executable and not part of the
+# daemon or the CLI.
+cordial-update = { path = "../../third_party/cordial/crates/cordial-update" }
+
+[dev-dependencies]
+# Ephemeral test keys and a real v2 signing block: the tests sign small
+# archives with a key generated for the test and keep nothing.
+ring = "0.17"
