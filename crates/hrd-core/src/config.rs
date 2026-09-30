@@ -31,6 +31,7 @@ pub struct Config {
     pub secrets: SecretsCfg,
     pub network: NetworkCfg,
     pub logs: LogsCfg,
+    pub login: LoginCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +92,8 @@ pub struct SchedulerCfg {
     pub max_instances: u32,
     /// How many starts may be in flight at once. Starting is the expensive
     /// part: decompression, relocation, asset loading, the first network
-    /// round trips.
+    /// round trips. `0` chooses from the machine: see
+    /// [`auto_concurrent_starts`].
     pub max_concurrent_starts: u32,
     /// Minimum gap between beginning two starts, in milliseconds.
     pub min_start_interval_ms: u64,
@@ -110,6 +112,15 @@ pub struct SchedulerCfg {
     /// A start is deferred while the kernel's memory pressure ("some", 10 s
     /// average, percent) is above this. 0 disables the check.
     pub max_memory_pressure_avg10: f64,
+    /// The same for CPU pressure. A start is mostly CPU for its first minute,
+    /// and on a machine with few cores and no GPU the clients already running
+    /// are using the CPU to draw; starting one more on top of that slows every
+    /// session down. 0 disables the check.
+    pub max_cpu_pressure_avg10: f64,
+    /// After the engine reports a disconnection, how long to wait for it to
+    /// join somewhere else (a teleport) before the session is called
+    /// disconnected and its processes are released.
+    pub disconnect_grace_s: u64,
     pub on_daemon_stop: OnDaemonStop,
 }
 
@@ -125,6 +136,8 @@ impl Default for SchedulerCfg {
             min_available_mem_mib: 2048,
             assumed_start_peak_mib: 1536,
             max_memory_pressure_avg10: 20.0,
+            max_cpu_pressure_avg10: 75.0,
+            disconnect_grace_s: 20,
             on_daemon_stop: OnDaemonStop::Keep,
         }
     }
@@ -185,10 +198,41 @@ pub enum Compositor {
     External,
 }
 
+/// What draws the client's frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Graphics {
+    /// Use a DRM render node if the service user can open one, software
+    /// otherwise. `doctor` says which was chosen and why.
+    Auto,
+    /// CPU rendering only: llvmpipe for GL, lavapipe for Vulkan, pixman in the
+    /// nested compositor, cairo in GTK. Nothing touches `/dev/dri`. This is
+    /// what a server without a graphics card uses, and it costs CPU on every
+    /// frame of every client (docs/gpu-less.md).
+    Software,
+    /// Require a render node; refuse to start a client without one rather
+    /// than fall back to drawing on the CPU.
+    Gpu,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct EngineCfg {
     pub compositor: Compositor,
+    pub graphics: Graphics,
+    /// Threads llvmpipe/lavapipe may use per client (`LP_NUM_THREADS`) when
+    /// drawing in software. 0 leaves the Mesa default, which is one per core
+    /// *per client*: with several clients on few cores that oversubscribes
+    /// badly, so `1` is usually the right value on such a machine.
+    pub software_threads: u32,
+    /// Pin each client to this many CPUs, chosen round-robin. 0 leaves the
+    /// scheduler alone. Affinity does not change how many CPUs the engine sees
+    /// (`sysconf` ignores it), so this limits contention, not the engine's
+    /// thread count.
+    pub cpus_per_instance: u32,
+    /// Path of the lavapipe ICD file. Empty searches
+    /// `/usr/share/vulkan/icd.d/lvp_icd*.json`.
+    pub vulkan_icd: String,
     /// Path of the `cordial-run` built from the patched upstream tree.
     pub cordial_run: String,
     /// Path of the per-instance launcher that becomes `cordial-run` (or `cage`)
@@ -207,6 +251,10 @@ impl Default for EngineCfg {
     fn default() -> Self {
         EngineCfg {
             compositor: Compositor::Cage,
+            graphics: Graphics::Auto,
+            software_threads: 0,
+            cpus_per_instance: 0,
+            vulkan_icd: String::new(),
             cordial_run: "/usr/lib/cordial-hrd/cordial-run".into(),
             enter: "/usr/lib/cordial-hrd/cordial-enter".into(),
             resolution: String::new(),
@@ -300,6 +348,39 @@ impl Default for LogsCfg {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LoginCfg {
+    /// A sign-in session is stopped after this long whatever happens.
+    pub timeout_s: u64,
+    /// Let the operator send clicks, keys and text to a *sign-in* client from
+    /// `cordialctl` or the panel, one action per request, to type a password or
+    /// confirm a code. It exists only for sessions started by `account login`;
+    /// clients that play never have a control surface. Off: sign in on a
+    /// machine with a display instead (docs/accounts.md).
+    pub console: bool,
+    /// Longest text one console request may type.
+    pub max_text_len: usize,
+}
+
+impl Default for LoginCfg {
+    fn default() -> Self {
+        LoginCfg {
+            timeout_s: 900,
+            console: true,
+            max_text_len: 256,
+        }
+    }
+}
+
+/// What `max_concurrent_starts = 0` means on this machine: one start at a time
+/// on a small machine or when every frame is drawn on the CPU, more where there
+/// are cores to spare. A guess, stated as one; `stats` shows the real peak.
+pub fn auto_concurrent_starts(cpus: usize, software_graphics: bool) -> u32 {
+    let per = if software_graphics { 4 } else { 2 };
+    (cpus / per).clamp(1, 8) as u32
+}
+
 impl Config {
     /// Load `path`; a missing file yields the defaults.
     pub fn load(path: &Path) -> Result<Config> {
@@ -335,11 +416,32 @@ impl Config {
                 s.max_instances
             ));
         }
-        if s.max_concurrent_starts == 0 || s.max_concurrent_starts > 64 {
+        if s.max_concurrent_starts > 64 {
             p.push(format!(
-                "scheduler.max_concurrent_starts = {} is outside 1..=64",
+                "scheduler.max_concurrent_starts = {} is outside 0..=64 (0 chooses from the machine)",
                 s.max_concurrent_starts
             ));
+        }
+        if !(0.0..=100.0).contains(&s.max_cpu_pressure_avg10) {
+            p.push("scheduler.max_cpu_pressure_avg10 must be 0..=100".into());
+        }
+        if s.disconnect_grace_s > 600 {
+            p.push("scheduler.disconnect_grace_s must be at most 600".into());
+        }
+        if self.login.timeout_s < 60 || self.login.timeout_s > 86_400 {
+            p.push("login.timeout_s must be 60..=86400".into());
+        }
+        if self.login.max_text_len == 0 || self.login.max_text_len > 1024 {
+            p.push("login.max_text_len must be 1..=1024".into());
+        }
+        if self.engine.software_threads > 64 {
+            p.push("engine.software_threads must be at most 64".into());
+        }
+        if self.engine.cpus_per_instance > 256 {
+            p.push("engine.cpus_per_instance must be at most 256".into());
+        }
+        if !self.engine.vulkan_icd.is_empty() && !self.engine.vulkan_icd.starts_with('/') {
+            p.push("engine.vulkan_icd must be an absolute path or empty".into());
         }
         if s.stop_grace_s == 0 || s.stop_grace_s > 600 {
             p.push("scheduler.stop_grace_s must be 1..=600".into());
@@ -478,7 +580,7 @@ mod tests {
     #[test]
     fn problems_are_collected() {
         let mut c = Config::default();
-        c.scheduler.max_concurrent_starts = 0;
+        c.scheduler.max_concurrent_starts = 65;
         c.resources.memory_high_mib = 4096;
         c.resources.memory_max_mib = 1024;
         c.engine.env.insert("LD_PRELOAD".into(), "/tmp/x.so".into());
@@ -527,6 +629,15 @@ mod tests {
         ] {
             assert_eq!(parse_resolution(s), None, "{s:?}");
         }
+    }
+
+    #[test]
+    fn auto_concurrency_is_modest_on_small_machines() {
+        assert_eq!(auto_concurrent_starts(4, true), 1);
+        assert_eq!(auto_concurrent_starts(4, false), 2);
+        assert_eq!(auto_concurrent_starts(1, false), 1);
+        assert_eq!(auto_concurrent_starts(64, false), 8);
+        assert_eq!(auto_concurrent_starts(0, true), 1);
     }
 
     #[test]

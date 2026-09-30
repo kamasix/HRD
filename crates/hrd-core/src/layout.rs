@@ -25,6 +25,12 @@ pub struct Layout {
     pub config_dir: PathBuf,
     pub state_dir: PathBuf,
     pub run_dir: PathBuf,
+    /// Named network namespaces and the files generated for them. Deliberately
+    /// **not** under `run_dir`: that directory belongs to the service user, and a
+    /// directory the service user could rename is one the entry wrapper could
+    /// not trust. This one has a root-owned parent (`/run`) and is written only
+    /// by the privileged helper.
+    pub netns_root: PathBuf,
     pub log_dir: PathBuf,
     /// The privileged helper's own state. Root-owned; the service user cannot
     /// read it, which is the point: WireGuard private keys live here.
@@ -42,6 +48,7 @@ impl Layout {
             config_dir: "/etc/cordial-hrd".into(),
             state_dir: "/var/lib/cordial-hrd".into(),
             run_dir: "/run/cordial-hrd".into(),
+            netns_root: "/run/cordial-hrd-netns".into(),
             log_dir: "/var/log/cordial-hrd".into(),
             netd_state_dir: "/var/lib/cordial-hrd-netd".into(),
         }
@@ -53,6 +60,7 @@ impl Layout {
             config_dir: root.join("etc"),
             state_dir: root.join("var/lib"),
             run_dir: root.join("run"),
+            netns_root: root.join("run-netns"),
             log_dir: root.join("var/log"),
             netd_state_dir: root.join("var/lib-netd"),
         }
@@ -162,7 +170,7 @@ impl Layout {
 
     /// Named network namespaces, one bind-mounted file per group.
     pub fn netns_dir(&self) -> PathBuf {
-        self.run_dir.join("netns")
+        self.netns_root.clone()
     }
 
     pub fn netns_file(&self, g: &GroupName) -> PathBuf {
@@ -256,5 +264,19 @@ mod tests {
     fn the_key_directory_is_outside_the_service_users_state() {
         let l = Layout::system();
         assert!(!l.netd_keys_dir().starts_with(&l.state_dir));
+    }
+
+    #[test]
+    fn the_namespace_directory_is_not_inside_anything_the_service_user_owns() {
+        for l in [Layout::system(), Layout::under(Path::new("/x"))] {
+            for owned in [&l.run_dir, &l.state_dir, &l.log_dir, &l.config_dir] {
+                assert!(
+                    !l.netns_dir().starts_with(owned),
+                    "{} is inside {}",
+                    l.netns_dir().display(),
+                    owned.display()
+                );
+            }
+        }
     }
 }

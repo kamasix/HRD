@@ -18,6 +18,15 @@ use hrd_core::model::Ipv6Policy;
 use crate::ipnet::IpNet;
 use crate::plan::{GroupSpec, Plan};
 
+/// One request line: an id the reply echoes, and the request flattened beside
+/// it, the same shape the control protocol uses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetdEnvelope {
+    pub id: u64,
+    #[serde(flatten)]
+    pub req: NetdRequest,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
 pub enum NetdRequest {

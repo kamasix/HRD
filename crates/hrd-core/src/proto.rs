@@ -19,8 +19,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
 use crate::ids::{AccountName, GroupName, NetworkName, PlaceId};
-use crate::model::{AuthStatus, Network, Readiness, ResourceMode, State};
+use crate::model::{AuthStatus, InstanceRecord, Network, Readiness, ResourceMode, RunKind, State};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_LINE: usize = 1 << 20;
@@ -84,6 +85,18 @@ pub enum Request {
     LoginCancel {
         name: AccountName,
     },
+    /// The current frame of the sign-in client, as a PNG. Only while a sign-in
+    /// session for this account is running.
+    LoginShot {
+        name: AccountName,
+    },
+    /// One action by the operator on the sign-in client. A request per human
+    /// action; the daemon rate-limits them and refuses them outright for any
+    /// instance that is not a sign-in session.
+    LoginInput {
+        name: AccountName,
+        action: LoginAction,
+    },
     /// Metadata only; never contains anything secret.
     AccountExport,
     AccountImport {
@@ -106,6 +119,13 @@ pub enum Request {
     },
     GroupRemove {
         name: GroupName,
+    },
+    GroupSet {
+        name: GroupName,
+        capacity: Option<u32>,
+        network: Option<NetworkName>,
+        clear_network: bool,
+        note: Option<String>,
     },
 
     // -- networks ---------------------------------------------------------
@@ -163,6 +183,9 @@ pub enum Request {
     Status {
         filter: Filter,
     },
+    InstanceShow {
+        id: AccountName,
+    },
     Stats {
         filter: Filter,
     },
@@ -190,6 +213,15 @@ pub enum Request {
     },
 
     // -- secrets ----------------------------------------------------------
+    // -- configuration ----------------------------------------------------
+    ConfigGet,
+    /// Change settings by dotted key (`scheduler.max_instances`). The result
+    /// is validated as a whole before anything is written; a change that makes
+    /// the configuration invalid changes nothing.
+    ConfigSet {
+        changes: Vec<ConfigChange>,
+    },
+
     SecretsStatus,
     /// Creates the keyring if it does not exist (`create: true`) or unlocks it.
     /// The passphrase is held in memory only for the duration of the call.
@@ -197,6 +229,75 @@ pub enum Request {
         passphrase: String,
         create: bool,
     },
+}
+
+/// What the operator does in a sign-in console. Deliberately small: a pointer
+/// click, text, and the handful of keys a sign-in form needs.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum LoginAction {
+    /// Coordinates are pixels of the frame `login_shot` returns.
+    Click {
+        x: u32,
+        y: u32,
+    },
+    /// Typed into the focused field. May be a password, so it is never logged
+    /// and never appears in `Debug` output.
+    Text {
+        text: String,
+    },
+    Key {
+        key: LoginKey,
+    },
+}
+
+impl std::fmt::Debug for LoginAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoginAction::Click { x, y } => write!(f, "Click({x},{y})"),
+            LoginAction::Text { text } => write!(f, "Text(<{} chars>)", text.chars().count()),
+            LoginAction::Key { key } => write!(f, "Key({key:?})"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginKey {
+    Enter,
+    Tab,
+    Backspace,
+    Escape,
+    Space,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl LoginKey {
+    /// Linux input-event code (`linux/input-event-codes.h`), which is what
+    /// Cordial's control surface takes.
+    pub fn evdev(self) -> i32 {
+        match self {
+            LoginKey::Escape => 1,
+            LoginKey::Backspace => 14,
+            LoginKey::Tab => 15,
+            LoginKey::Enter => 28,
+            LoginKey::Space => 57,
+            LoginKey::Up => 103,
+            LoginKey::Left => 105,
+            LoginKey::Right => 106,
+            LoginKey::Down => 108,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigChange {
+    pub key: String,
+    /// `None` removes the override and returns the key to its file value.
+    pub value: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,9 +423,95 @@ pub struct InstanceView {
     pub cpu_percent: Measured<f64>,
     pub processes: Measured<u32>,
     pub threads: Measured<u32>,
-    /// Latest lines that explain the state, already scrubbed.
+    #[serde(default)]
+    pub kind: RunKind,
     #[serde(default)]
     pub labels: Vec<String>,
+}
+
+/// Everything known about one instance: the view plus the record's facts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceDetail {
+    pub view: InstanceView,
+    pub record: InstanceRecord,
+    /// The last lines of the client's log, scrubbed.
+    pub log_tail: Vec<String>,
+    /// Members of the process set: pid, class, rss bytes.
+    pub members: Vec<MemberView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberView {
+    pub pid: u32,
+    pub name: String,
+    pub class: String,
+    pub rss_bytes: Measured<u64>,
+    pub threads: Measured<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginView {
+    pub account: AccountName,
+    pub running: bool,
+    pub state: State,
+    pub started_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    /// The last screen the engine reported (`Landing` is the signed-out one).
+    pub screen: Option<String>,
+    pub signed_in: bool,
+    pub console: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShotView {
+    pub width: u32,
+    pub height: u32,
+    /// Standard base64 of a PNG.
+    pub png_base64: String,
+    pub taken_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    Ok,
+    Info,
+    Warn,
+    Fail,
+    /// Could not be determined; never shown as a pass.
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Check {
+    pub id: String,
+    pub title: String,
+    pub status: CheckStatus,
+    pub detail: String,
+    /// What to do about it, when there is something to do.
+    #[serde(default)]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigView {
+    pub effective: Config,
+    /// The overrides written through `config_set`, as JSON.
+    pub overrides: serde_json::Value,
+    pub file: String,
+    pub overrides_file: String,
+    pub problems: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigApplied {
+    /// Keys whose new value is already in effect.
+    pub live: Vec<String>,
+    /// Keys that take effect on the next start of an instance.
+    pub next_start: Vec<String>,
+    /// Keys that need `systemctl restart cordiald`.
+    pub restart: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

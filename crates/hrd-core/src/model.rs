@@ -420,12 +420,36 @@ pub struct Signals {
     pub signed_in_at: Option<u64>,
     #[serde(default)]
     pub signed_out_at: Option<u64>,
+    /// The last `app ready: <screen>` the engine printed.
+    #[serde(default)]
+    pub screen: Option<String>,
     #[serde(default)]
     pub join_requested_at: Option<u64>,
     #[serde(default)]
     pub connected_at: Option<u64>,
+    /// Place the client reported joining, which need not be the one asked for
+    /// (an experience can teleport).
+    #[serde(default)]
+    pub joined_place: Option<u64>,
     #[serde(default)]
     pub disconnected_at: Option<u64>,
+    /// The number in the engine's `Disconnection Notification. Reason: N`, the
+    /// only machine-readable reason the open layer has access to. What N means
+    /// is Roblox's, and this manager does not interpret it.
+    #[serde(default)]
+    pub disconnect_code: Option<i64>,
+}
+
+/// Why a process set was started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RunKind {
+    /// Joins an experience.
+    #[default]
+    Play,
+    /// A sign-in session: no join, and the only kind with the operator's
+    /// login console attached.
+    Login,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,6 +484,13 @@ pub struct InstanceRecord {
     pub exit: Option<ExitRecord>,
     #[serde(default)]
     pub signals: Signals,
+    #[serde(default)]
+    pub kind: RunKind,
+    /// The largest `memory.current` (or, without the memory controller, the
+    /// largest summed RSS) seen while the run was `starting`. Feeds the start
+    /// scheduler's estimate of what the next start will cost.
+    #[serde(default)]
+    pub start_peak_bytes: Option<u64>,
 }
 
 impl InstanceRecord {
@@ -480,6 +511,8 @@ impl InstanceRecord {
             process: None,
             exit: None,
             signals: Signals::default(),
+            kind: RunKind::Play,
+            start_peak_bytes: None,
         }
     }
 }

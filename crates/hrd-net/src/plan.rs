@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn descriptions_never_contain_key_material_words() {
         for s in steps_to_create(&spec(), &facts(true), "hrdwtmp") {
-            let d = s.describe("/run/cordial-hrd/netns").to_ascii_lowercase();
+            let d = s.describe("/run/cordial-hrd-netns").to_ascii_lowercase();
             assert!(
                 !d.contains("privatekey") && !d.contains("presharedkey"),
                 "{d}"

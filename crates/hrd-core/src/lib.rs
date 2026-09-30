@@ -19,5 +19,6 @@ pub mod model;
 pub mod proto;
 pub mod redact;
 pub mod time;
+pub mod wire;
 
 pub use error::{Error, Result};

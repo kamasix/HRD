@@ -10,8 +10,7 @@ use hrd_core::ids::GroupName;
 use hrd_core::proto::{encode_line, ResponseEnvelope, MAX_LINE};
 use hrd_core::{Error, Result};
 use hrd_net::plan::{self, Action, GroupSpec, Plan};
-use hrd_net::proto::{ApplyOutcome, NetdRequest, PlanReply};
-use serde::Deserialize;
+use hrd_net::proto::{ApplyOutcome, NetdEnvelope, NetdRequest, PlanReply};
 
 use crate::apply::{self, Env};
 use crate::{nsops, probe, status};
@@ -23,13 +22,6 @@ pub struct Shared {
     /// namespace.
     pub write_lock: Mutex<()>,
     pub allowed_uids: Vec<u32>,
-}
-
-#[derive(Deserialize)]
-struct Envelope {
-    id: u64,
-    #[serde(flatten)]
-    req: NetdRequest,
 }
 
 pub fn bind(path: &Path, gid: Option<u32>, mode: u32) -> Result<UnixListener> {
@@ -100,7 +92,7 @@ fn handle(stream: UnixStream, shared: &Shared) -> Result<()> {
             return Err(Error::Protocol("request longer than the line limit".into()));
         }
         reader.get_mut().set_limit(MAX_LINE as u64);
-        let reply = match serde_json::from_str::<Envelope>(&line) {
+        let reply = match serde_json::from_str::<NetdEnvelope>(&line) {
             Ok(env) => match dispatch(shared, env.req) {
                 Ok(v) => ResponseEnvelope::ok(env.id, v),
                 Err(e) => ResponseEnvelope::err(env.id, &e),

@@ -15,7 +15,7 @@
 //! and checks that they are empty, *before* it executes anything it was given.
 //!
 //! What it will not do: run as anyone else (it never changes uid), open any
-//! namespace that is not a file under `/run/cordial-hrd/netns` on an `nsfs`
+//! namespace that is not a file under `/run/cordial-hrd-netns` on an `nsfs`
 //! mount owned by root, read its environment to decide a path, or follow a
 //! symlink. The namespace directory is a constant, not an option: an option
 //! that chose the directory would let the caller pick which namespace to enter.
@@ -37,7 +37,7 @@ use rustix::fs::OFlags;
 use rustix::mount::{mount_bind, mount_change, MountPropagationFlags};
 use rustix::thread::{CapabilitySet, CapabilitySets, LinkNameSpaceType, UnshareFlags};
 
-const NS_DIR: &str = "/run/cordial-hrd/netns";
+const NS_DIR: &str = "/run/cordial-hrd-netns";
 const NSFS_MAGIC: u64 = 0x6e73_6673;
 const IFACE: &str = "wg0";
 
