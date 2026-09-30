@@ -20,5 +20,6 @@
 
 pub mod cgroup;
 pub mod disk;
+pub mod hostcheck;
 pub mod procfs;
 pub mod stats;

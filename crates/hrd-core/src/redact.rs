@@ -40,6 +40,42 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// A secret that travels in a protocol message: it serialises as the plain
+/// string (the message is the transport) but never prints, and is overwritten
+/// when dropped.
+#[derive(Clone, Default)]
+pub struct Passphrase(Zeroizing<String>);
+
+impl Passphrase {
+    pub fn new(s: String) -> Self {
+        Passphrase(Zeroizing::new(s))
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for Passphrase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Passphrase(<{} bytes>)", self.0.len())
+    }
+}
+
+impl serde::Serialize for Passphrase {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Passphrase {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(Passphrase::new)
+    }
+}
+
 const MASK: &str = "[REDACTED]";
 
 /// Markers after which the rest of a token is a credential. The Roblox session
@@ -146,5 +182,25 @@ mod tests {
     fn scrub_leaves_ordinary_lines_alone() {
         let line = "[FLog::Output] setAssetFolder /data/app_assets/content";
         assert!(matches!(scrub(line), Cow::Borrowed(_)));
+    }
+}
+
+#[cfg(test)]
+mod passphrase_tests {
+    use super::*;
+
+    #[test]
+    fn a_passphrase_round_trips_but_never_prints() {
+        let p = Passphrase::new("hunter2".into());
+        assert!(!format!("{p:?}").contains("hunter2"));
+        let j = serde_json::to_string(&p).unwrap();
+        assert_eq!(j, "\"hunter2\"");
+        let back: Passphrase = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.expose(), "hunter2");
+        let req = crate::proto::Request::SecretsUnlock {
+            passphrase: p,
+            create: false,
+        };
+        assert!(!format!("{req:?}").contains("hunter2"));
     }
 }

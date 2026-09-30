@@ -198,6 +198,20 @@ pub enum Compositor {
     External,
 }
 
+/// How the join link reaches the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinVia {
+    /// `--join-url` in the process arguments, which upstream's `cordial-run`
+    /// supports and every local user can read in `/proc/<pid>/cmdline`. Refused
+    /// for links that carry a private-server code.
+    Argv,
+    /// `CORDIAL_JOIN_URL` in the environment (readable by the same user only).
+    /// **Needs the patched `cordial-run`** (patches/cordial/); an unpatched
+    /// build ignores the variable and never joins.
+    Env,
+}
+
 /// What draws the client's frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -219,6 +233,7 @@ pub enum Graphics {
 #[serde(deny_unknown_fields, default)]
 pub struct EngineCfg {
     pub compositor: Compositor,
+    pub join_url_via: JoinVia,
     pub graphics: Graphics,
     /// Threads llvmpipe/lavapipe may use per client (`LP_NUM_THREADS`) when
     /// drawing in software. 0 leaves the Mesa default, which is one per core
@@ -238,6 +253,9 @@ pub struct EngineCfg {
     /// Path of the per-instance launcher that becomes `cordial-run` (or `cage`)
     /// after entering the group's namespace.
     pub enter: String,
+    /// Path of `cordial-import`, which the daemon runs (as the service user,
+    /// with the operator's files passed as descriptors) to install a runtime.
+    pub importer: String,
     /// Render resolution, `WIDTHxHEIGHT`. Empty uses the resource mode's
     /// value. Smaller is cheaper for the open layer's swapchain and
     /// compositor surface and says nothing about the engine's own memory.
@@ -251,12 +269,14 @@ impl Default for EngineCfg {
     fn default() -> Self {
         EngineCfg {
             compositor: Compositor::Cage,
+            join_url_via: JoinVia::Argv,
             graphics: Graphics::Auto,
             software_threads: 0,
             cpus_per_instance: 0,
             vulkan_icd: String::new(),
             cordial_run: "/usr/lib/cordial-hrd/cordial-run".into(),
             enter: "/usr/lib/cordial-hrd/cordial-enter".into(),
+            importer: "/usr/lib/cordial-hrd/cordial-import".into(),
             resolution: String::new(),
             env: BTreeMap::new(),
         }
@@ -497,6 +517,7 @@ impl Config {
         for (name, path) in [
             ("engine.cordial_run", &self.engine.cordial_run),
             ("engine.enter", &self.engine.enter),
+            ("engine.importer", &self.engine.importer),
         ] {
             if !path.starts_with('/') {
                 p.push(format!("{name} must be an absolute path"));

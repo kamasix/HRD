@@ -226,7 +226,7 @@ pub enum Request {
     /// Creates the keyring if it does not exist (`create: true`) or unlocks it.
     /// The passphrase is held in memory only for the duration of the call.
     SecretsUnlock {
-        passphrase: String,
+        passphrase: crate::redact::Passphrase,
         create: bool,
     },
 }
