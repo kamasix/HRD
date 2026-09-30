@@ -1,5 +1,6 @@
 [package]
 name = "hrd-net"
+description = "WireGuard configuration import, network plans and gateway plans. Pure logic: nothing here touches the system."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,3 +11,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hrd-core = { path = "../hrd-core" }
+serde.workspace = true
+serde_json.workspace = true
+# Curve25519, only to derive the public key that the gateway's peer list needs
+# from the private key in an imported file, so the operator does not have to
+# run `wg pubkey` by hand and the manager can check a key is well formed.
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+sha2 = "0.10"

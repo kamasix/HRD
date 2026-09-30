@@ -1,5 +1,6 @@
 [package]
 name = "hrd-proc"
+description = "Reading /proc and cgroup v2 honestly: what each number means and what it does not"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,4 +12,4 @@ workspace = true
 
 [dependencies]
 hrd-core = { path = "../hrd-core" }
-rustix = { workspace = true, features = ["fs", "process", "std"] }
+rustix = { workspace = true, features = ["fs", "process", "param", "std"] }
