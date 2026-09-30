@@ -83,7 +83,9 @@ impl Layout {
     }
 
     pub fn netd_socket(&self) -> PathBuf {
-        self.run_dir.join("netd.sock")
+        // In the root-owned directory, not in `run_dir`: the service user owns
+        // `run_dir` and could put its own socket where the client connects.
+        self.netns_dir().join("netd.sock")
     }
 
     pub fn registry_file(&self) -> PathBuf {

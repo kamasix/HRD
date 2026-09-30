@@ -216,6 +216,18 @@ fn rustls_pemfile_key(pem: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'st
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
+/// Connections one address may hold at once, and how long it has to finish
+/// sending the request head. The per-read timeout alone lets a client that
+/// sends a byte every few seconds hold a slot for ever.
+const PER_IP: usize = 6;
+const HEAD_DEADLINE: Duration = Duration::from_secs(20);
+
+fn per_ip() -> &'static std::sync::Mutex<std::collections::HashMap<IpAddr, usize>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<IpAddr, usize>>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
 fn serve_one(ctx: &Ctx, tls: Arc<rustls::ServerConfig>, tcp: TcpStream) {
     let remote = tcp
         .peer_addr()
@@ -226,8 +238,24 @@ fn serve_one(ctx: &Ctx, tls: Arc<rustls::ServerConfig>, tcp: TcpStream) {
     let Ok(conn) = rustls::ServerConnection::new(tls) else {
         return;
     };
+    let watchdog = tcp.try_clone().ok();
+    let head_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(w) = watchdog {
+        let done = head_done.clone();
+        std::thread::Builder::new()
+            .name("panel-deadline".into())
+            .spawn(move || {
+                std::thread::sleep(HEAD_DEADLINE);
+                if !done.load(Ordering::Relaxed) {
+                    let _ = w.shutdown(std::net::Shutdown::Both);
+                }
+            })
+            .ok();
+    }
     let mut stream = rustls::StreamOwned::new(conn, tcp);
-    let req = match http::read_request(&mut stream) {
+    let head = http::read_request(&mut stream);
+    head_done.store(true, Ordering::Relaxed);
+    let req = match head {
         Ok(r) => r,
         Err(b) => {
             let status = match b {
@@ -263,7 +291,10 @@ fn run(layout: &Layout) -> Result<()> {
     // Uploads left by an interrupted import are removed at start.
     let _ = fsutil::remove_dir_all_if_exists(&p.uploads());
     let ctx = Arc::new(Ctx {
-        auth: auth::Auth::new(hash),
+        auth: {
+            let p2 = Paths::new(layout);
+            auth::Auth::new(hash).with_reload(move || setup::load_token_hash(&p2).ok())
+        },
         backend,
         uploads: p.uploads(),
         login_delay: Duration::from_millis(1000),
@@ -280,14 +311,41 @@ fn run(layout: &Layout) -> Result<()> {
             ACTIVE.fetch_sub(1, Ordering::Relaxed);
             continue;
         }
+        let ip = tcp.peer_addr().map(|a| a.ip()).ok();
+        if let Some(ip) = ip {
+            let mut m = per_ip().lock().unwrap_or_else(|e| e.into_inner());
+            let n = m.entry(ip).or_insert(0);
+            if *n >= PER_IP {
+                ACTIVE.fetch_sub(1, Ordering::Relaxed);
+                continue;
+            }
+            *n += 1;
+        }
         let (ctx, tls) = (ctx.clone(), tls.clone());
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("panel-conn".into())
             .spawn(move || {
                 serve_one(&ctx, tls, tcp);
                 ACTIVE.fetch_sub(1, Ordering::Relaxed);
-            })
-            .ok();
+                if let Some(ip) = ip {
+                    let mut m = per_ip().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(n) = m.get_mut(&ip) {
+                        *n -= 1;
+                        if *n == 0 {
+                            m.remove(&ip);
+                        }
+                    }
+                }
+            });
+        if spawned.is_err() {
+            ACTIVE.fetch_sub(1, Ordering::Relaxed);
+            if let Some(ip) = ip {
+                let mut m = per_ip().lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(n) = m.get_mut(&ip) {
+                    *n = n.saturating_sub(1);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -343,7 +401,7 @@ fn main() -> ExitCode {
                 }
             }
         }),
-        Some("reset-token") => setup::reset_token(&p).map(|t| println!("New login token (shown once): {t}\nExisting sessions stay valid until they expire or the panel restarts.")),
+        Some("reset-token") => setup::reset_token(&p).map(|t| println!("New login token (shown once): {t}\nThe running panel adopts it at the next login attempt and ends every session opened with the old one.")),
         _ => {
             eprint!("{USAGE}");
             return ExitCode::from(2);

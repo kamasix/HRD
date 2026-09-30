@@ -68,8 +68,54 @@ pub fn build(base: Value, over: &Value) -> Result<Config> {
 }
 
 pub fn load(l: &Layout) -> Result<(Config, Value)> {
-    let over = load_overrides(l)?;
+    let mut over = load_overrides(l)?;
+    for k in strip_protected(&mut over) {
+        eprintln!(
+            "<4>cordiald: ignoring {k} in config-overrides.json: it can only be set in {}",
+            l.config_file().display()
+        );
+    }
     Ok((build(base_value(l)?, &over)?, over))
+}
+
+/// Settings that widen who may operate the daemon, which programs it runs, or
+/// whether traffic may leave unrouted. The overrides file lives in the service
+/// user's own state directory, so anything that user (and therefore any client)
+/// can write there must not be able to set these: they are changed in the
+/// root-owned configuration file only.
+pub fn is_protected(key: &str) -> bool {
+    let (sec, name) = key.split_once('.').unwrap_or((key, ""));
+    matches!(sec, "service" | "control" | "secrets")
+        || (sec == "engine"
+            && matches!(
+                name,
+                "cordial_run" | "enter" | "importer" | "vulkan_icd" | "env" | "compositor"
+            ))
+        || (sec == "network" && name == "allow_unrouted")
+        || (sec == "login" && matches!(name, "console" | "max_text_len"))
+}
+
+/// Drop protected keys from an overrides object, returning what was dropped.
+fn strip_protected(over: &mut Value) -> Vec<String> {
+    let mut dropped = Vec::new();
+    if let Some(top) = over.as_object_mut() {
+        let secs: Vec<String> = top.keys().cloned().collect();
+        for sec in secs {
+            let Some(inner) = top.get_mut(&sec).and_then(|v| v.as_object_mut()) else {
+                continue;
+            };
+            let names: Vec<String> = inner.keys().cloned().collect();
+            for n in names {
+                let k = format!("{sec}.{n}");
+                if is_protected(&k) {
+                    inner.remove(&n);
+                    dropped.push(k);
+                }
+            }
+        }
+        top.retain(|_, v| v.as_object().is_none_or(|o| !o.is_empty()));
+    }
+    dropped
 }
 
 /// Set (`Some`) or remove (`None`) a dotted key in an overrides object.
@@ -84,6 +130,11 @@ pub fn apply_change(over: &mut Value, key: &str, value: Option<Value>) -> Result
         })
     {
         return Err(Error::invalid(format!("{key:?} is not a setting name (expected section.name, for example scheduler.max_instances)")));
+    }
+    if is_protected(key) {
+        return Err(Error::Denied(format!(
+            "{key} can only be changed in the root-owned configuration file (it decides who may operate the daemon, which programs run, or how traffic is routed)"
+        )));
     }
     let obj = over
         .as_object_mut()
@@ -149,6 +200,22 @@ mod tests {
             build(base, &json!({"scheduler": {"no_such_key": 1}})).is_err(),
             "unknown keys stay errors"
         );
+    }
+
+    #[test]
+    fn protected_keys_cannot_be_set_or_loaded_from_overrides() {
+        let mut o = json!({});
+        for k in [
+            "control.allowed_uids",
+            "engine.cordial_run",
+            "network.allow_unrouted",
+            "secrets.backend",
+        ] {
+            assert!(apply_change(&mut o, k, Some(json!(1))).is_err(), "{k}");
+        }
+        let mut o = json!({"control": {"allowed_uids": [5]}, "scheduler": {"max_instances": 3}});
+        assert_eq!(strip_protected(&mut o), vec!["control.allowed_uids"]);
+        assert_eq!(o, json!({"scheduler": {"max_instances": 3}}));
     }
 
     #[test]

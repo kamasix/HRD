@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+rustix = { workspace = true, features = ["net", "process"] }
 hrd-core = { path = "../hrd-core" }
 serde.workspace = true
 serde_json.workspace = true

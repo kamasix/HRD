@@ -247,7 +247,12 @@ fn call(ctx: &Ctx, req: &http::Request, stream: &mut dyn Read) -> Response {
     if let Some(why) = forbidden(&request) {
         return err(403, "denied", why);
     }
-    eprintln!("<6>panel: call {cmd}");
+    let shown: String = cmd
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(40)
+        .collect();
+    eprintln!("<6>panel: call {shown}");
     match ctx.backend.call(request) {
         Ok(data) => Response::json(200, &json!({ "ok": true, "data": data })),
         Err(e) => from_error(&e),
@@ -310,6 +315,8 @@ fn clean_name(n: &str) -> String {
     }
 }
 
+const MAX_UPLOAD_SETS: usize = 8;
+
 fn upload(ctx: &Ctx, req: &http::Request, stream: &mut dyn Read) -> Response {
     let (Some(set), Some(name)) = (req.query_param("set"), req.query_param("name")) else {
         return err(400, "invalid", "set and name are required");
@@ -321,6 +328,15 @@ fn upload(ctx: &Ctx, req: &http::Request, stream: &mut dyn Read) -> Response {
         return err(413, "invalid", "a file is 1 byte to 1 GiB");
     }
     let dir = ctx.uploads.join(set);
+    // Abandoned sets are only cleaned at panel start: bound how many can exist.
+    if !dir.exists()
+        && std::fs::read_dir(&ctx.uploads)
+            .map(|d| d.count())
+            .unwrap_or(0)
+            >= MAX_UPLOAD_SETS
+    {
+        return err(429, "busy", "too many pending uploads: finish or cancel an import, or restart the panel to clear abandoned ones");
+    }
     if hrd_core::fsutil::ensure_private_dir(&ctx.uploads, 0o700)
         .and_then(|_| hrd_core::fsutil::ensure_private_dir(&dir, 0o700))
         .is_err()

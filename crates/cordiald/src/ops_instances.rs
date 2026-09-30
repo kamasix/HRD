@@ -658,6 +658,7 @@ fn check_version(v: &str) -> Result<()> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
         || v.starts_with('.')
+        || v.starts_with('-')
     {
         Err(Error::invalid("not a runtime version"))
     } else {

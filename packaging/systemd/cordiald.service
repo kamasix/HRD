@@ -52,6 +52,7 @@ ProtectHostname=yes
 LockPersonality=yes
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
+RestrictNamespaces=~user
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 SystemCallArchitectures=native
 # The engine maps executable memory; MemoryDenyWriteExecute must stay off.

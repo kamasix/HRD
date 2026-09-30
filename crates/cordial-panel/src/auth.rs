@@ -86,8 +86,13 @@ struct Fails {
     locked_until: Option<Instant>,
 }
 
+type Reload = Box<dyn Fn() -> Option<[u8; 32]> + Send + Sync>;
+
 pub struct Auth {
-    token_hash: [u8; 32],
+    token_hash: Mutex<[u8; 32]>,
+    /// Reads the stored hash again at each login, so that `reset-token` takes
+    /// effect without restarting the panel.
+    reload: Option<Reload>,
     sessions: Mutex<HashMap<String, Session>>,
     fails: Mutex<HashMap<String, Fails>>,
 }
@@ -102,9 +107,31 @@ pub enum Login {
 impl Auth {
     pub fn new(token_hash: [u8; 32]) -> Auth {
         Auth {
-            token_hash,
+            token_hash: Mutex::new(token_hash),
+            reload: None,
             sessions: Mutex::new(HashMap::new()),
             fails: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_reload(mut self, f: impl Fn() -> Option<[u8; 32]> + Send + Sync + 'static) -> Auth {
+        self.reload = Some(Box::new(f));
+        self
+    }
+
+    /// Adopt a replaced token: the old one stops working and every session
+    /// opened with it ends.
+    fn refresh_token(&self) {
+        let Some(new) = self.reload.as_ref().and_then(|f| f()) else {
+            return;
+        };
+        let mut cur = self.token_hash.lock().unwrap_or_else(|e| e.into_inner());
+        if *cur != new {
+            *cur = new;
+            self.sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
         }
     }
 
@@ -120,7 +147,9 @@ impl Auth {
                 *e = Fails::default();
             }
         }
-        if ct_eq(&hash_token(token), &self.token_hash) {
+        self.refresh_token();
+        let current = *self.token_hash.lock().unwrap_or_else(|e| e.into_inner());
+        if ct_eq(&hash_token(token), &current) {
             self.fails
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())

@@ -58,6 +58,17 @@ impl NetdClient {
                 self.path.display()
             ))
         })?;
+        // The helper runs as root. A socket served by anyone else is not it,
+        // and what this client sends (WireGuard configurations) must not go there.
+        let peer = rustix::net::sockopt::socket_peercred(&stream)
+            .map_err(|e| Error::io("read the helper's credentials", std::io::Error::from(e)))?;
+        let (peer, me) = (peer.uid.as_raw(), rustix::process::geteuid().as_raw());
+        if peer != 0 && peer != me {
+            return Err(Error::Denied(format!(
+                "the socket at {} is served by uid {peer}, not by root: refusing to talk to it",
+                self.path.display()
+            )));
+        }
         let mut conn = Conn::new(stream);
         conn.set_timeouts(Some(self.timeout), Some(Duration::from_secs(10)))?;
         conn.send_json(&NetdEnvelope { id: 1, req })?;

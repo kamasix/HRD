@@ -99,22 +99,27 @@ const KEYS: &[&str] = &[
 pub fn scrub(line: &str) -> Cow<'_, str> {
     let mut out: Cow<'_, str> = Cow::Borrowed(line);
 
-    if let Some(pos) = out.find(COOKIE_BANNER) {
+    // Every occurrence of the cookie banner, not only the first.
+    let mut from = 0;
+    while let Some(rel) = out[from..].find(COOKIE_BANNER) {
+        let pos = from + rel;
         let end = out[pos..]
             .find(|c: char| c.is_whitespace() || c == ';' || c == '"' || c == '\'')
             .map(|n| pos + n)
             .unwrap_or(out.len());
         out = Cow::Owned(format!("{}{MASK}{}", &out[..pos], &out[end..]));
+        from = pos + MASK.len();
     }
 
     for key in KEYS {
-        // Case-insensitive search for `key` followed by `=`, `:` or a space,
-        // then the value to the next whitespace.
-        let lower = out.to_ascii_lowercase();
         let needle = key.to_ascii_lowercase();
         let mut search_from = 0;
-        let mut rebuilt: Option<String> = None;
-        while let Some(rel) = lower[search_from..].find(&needle) {
+        loop {
+            // ASCII lowercasing keeps byte offsets, so `lower` indexes `out`.
+            let lower = out.to_ascii_lowercase();
+            let Some(rel) = lower[search_from..].find(&needle) else {
+                break;
+            };
             let key_end = search_from + rel + needle.len();
             let rest = &lower[key_end..];
             let sep_len = rest
@@ -129,21 +134,16 @@ pub fn scrub(line: &str) -> Cow<'_, str> {
                 .find(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '"' || c == '\'')
                 .map(|n| value_start + n)
                 .unwrap_or(out.len());
-            if value_end == value_start {
+            if value_end == value_start || out[value_start..value_end] == *MASK {
                 search_from = key_end;
                 continue;
             }
-            let base = rebuilt.take().unwrap_or_else(|| out.to_string());
-            // `base` has the same prefix as `out` up to `value_start`.
-            rebuilt = Some(format!(
+            out = Cow::Owned(format!(
                 "{}{MASK}{}",
-                &base[..value_start],
-                &base[value_end..]
+                &out[..value_start],
+                &out[value_end..]
             ));
-            break;
-        }
-        if let Some(r) = rebuilt {
-            out = Cow::Owned(r);
+            search_from = value_start + MASK.len();
         }
     }
     out
@@ -176,6 +176,14 @@ mod tests {
         assert!(!scrub("password=hunter2 user=x").contains("hunter2"));
         assert!(scrub("password=hunter2 user=x").contains("user=x"));
         assert!(!scrub("Authorization: Bearer abcdef").contains("abcdef"));
+    }
+
+    #[test]
+    fn scrub_masks_every_occurrence() {
+        let out = scrub("password=aaa1 x password=bbb2 _|WARNING:-DO-NOT-SHARE-THIS.c1 _|WARNING:-DO-NOT-SHARE-THIS.c2");
+        for leak in ["aaa1", "bbb2", "c1", "c2"] {
+            assert!(!out.contains(leak), "{out}");
+        }
     }
 
     #[test]

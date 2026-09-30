@@ -152,7 +152,9 @@ pub fn init(ctx: &Ctx, a: InitArgs) -> Result<()> {
             std::fs::rename(&cfg_path, cfg_path.with_extension("toml.bak"))
                 .map_err(|e| Error::io("keep the old configuration", e))?;
         }
-        let text = format!("{}{}", EXAMPLE_HEADER, Config::default().to_toml()?);
+        // The annotated example, so the file explains itself. The defaults are
+        // what a missing key means either way.
+        let text = EXAMPLE_CONFIG.to_string();
         fsutil::atomic_write(&cfg_path, text.as_bytes(), 0o644)?;
         done.push(format!("wrote {}", cfg_path.display()));
     }
@@ -188,6 +190,9 @@ pub fn init(ctx: &Ctx, a: InitArgs) -> Result<()> {
     Ok(())
 }
 
+const EXAMPLE_CONFIG: &str = include_str!("../../../config/cordiald.toml.example");
+
+#[allow(dead_code)]
 const EXAMPLE_HEADER: &str = "# cordiald.toml: the settings the daemon starts with. Only what you change matters;\n# anything left out keeps the value shown. Unknown keys are errors.\n# Values changed with `cordialctl config set` are kept separately and override this file.\n# Nothing in this file is a secret, and nothing here is a statement about what Roblox allows.\n\n";
 
 fn lookup_ids(user: &str, group: &str) -> Option<(u32, u32)> {

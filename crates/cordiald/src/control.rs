@@ -76,10 +76,17 @@ pub fn lookup_gid(group: &str) -> Option<u32> {
 /// account files, not from the peer's process, so a pid that was reused after the
 /// connection cannot change the answer.
 fn uid_in_group(uid: u32, gid: u32) -> bool {
-    let Ok(passwd) = std::fs::read_to_string("/etc/passwd") else { return false };
+    let Ok(passwd) = std::fs::read_to_string("/etc/passwd") else {
+        return false;
+    };
     let Some((name, primary)) = passwd.lines().find_map(|l| {
         let f: Vec<&str> = l.split(':').collect();
-        (f.get(2)?.parse::<u32>().ok()? == uid).then(|| (f[0].to_string(), f.get(3).and_then(|x| x.parse::<u32>().ok())))
+        (f.get(2)?.parse::<u32>().ok()? == uid).then(|| {
+            (
+                f[0].to_string(),
+                f.get(3).and_then(|x| x.parse::<u32>().ok()),
+            )
+        })
     }) else {
         return false;
     };
@@ -90,7 +97,8 @@ fn uid_in_group(uid: u32, gid: u32) -> bool {
         .map(|g| {
             g.lines().any(|l| {
                 let f: Vec<&str> = l.split(':').collect();
-                f.get(2).and_then(|x| x.parse::<u32>().ok()) == Some(gid) && f.get(3).is_some_and(|m| m.split(',').any(|u| u == name))
+                f.get(2).and_then(|x| x.parse::<u32>().ok()) == Some(gid)
+                    && f.get(3).is_some_and(|m| m.split(',').any(|u| u == name))
             })
         })
         .unwrap_or(false)
@@ -113,7 +121,10 @@ pub fn serve(d: Arc<Daemon>, listener: UnixListener) {
             use rustix::event::{poll, PollFd, PollFlags};
             let b = listener.as_fd();
             let mut fds = [PollFd::new(&b, PollFlags::IN)];
-            let ts = rustix::event::Timespec { tv_sec: 0, tv_nsec: 500_000_000 };
+            let ts = rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 500_000_000,
+            };
             let _ = poll(&mut fds, Some(&ts));
         }
         match listener.accept() {
@@ -149,6 +160,12 @@ pub fn serve(d: Arc<Daemon>, listener: UnixListener) {
 
 fn handle(d: &Arc<Daemon>, stream: UnixStream) -> Result<()> {
     let mut conn = Conn::new(stream);
+    // A client that connects and says nothing must not hold one of the few
+    // connection slots for ever.
+    conn.set_timeouts(
+        Some(Duration::from_secs(600)),
+        Some(Duration::from_secs(60)),
+    )?;
     let cred = conn.peer_cred()?;
     let cfg = d.cfg();
     let sock_gid = std::fs::metadata(d.layout.control_socket())

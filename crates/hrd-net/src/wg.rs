@@ -257,6 +257,9 @@ pub fn parse(text: &str) -> Result<WgConfig> {
                 if p == 0 {
                     return Err(bad(n, "ListenPort must not be 0"));
                 }
+                if p < 1024 {
+                    return Err(bad(n, "ListenPort must be 1024 or higher (a privileged port is never needed by a client)"));
+                }
                 listen_port = Some(p);
             }
             (Section::Interface, "table" | "fwmark" | "saveconfig") => {

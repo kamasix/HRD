@@ -10,7 +10,7 @@
 //! The text of a `text` action can be a password. It is written to the socket and
 //! forgotten: it is not logged, not stored and not echoed in an error.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -32,7 +32,9 @@ fn exchange(sock: &Path, line: &str, timeout: Duration) -> Result<String> {
         .and_then(|_| s.write_all(b"\n"))
         .map_err(|e| Error::io("write to the sign-in client", e))?;
     let mut reply = String::new();
-    BufReader::new(&s).take_line(&mut reply)?;
+    // A reply is one short line; a client that never ends its line cannot make
+    // the daemon buffer more than this.
+    BufReader::new((&s).take(1 << 20)).take_line(&mut reply)?;
     Ok(reply)
 }
 

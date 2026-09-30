@@ -1,7 +1,6 @@
 //! The socket, the peer check and the request dispatch.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -39,26 +38,47 @@ pub fn bind(path: &Path, gid: Option<u32>, mode: u32) -> Result<UnixListener> {
             ))
         }
     }
-    let l =
-        UnixListener::bind(path).map_err(|e| Error::io(format!("bind {}", path.display()), e))?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .map_err(|e| Error::io("chmod the socket", e))?;
+    // The socket is created with no permissions for anyone but its owner, and
+    // opened up through the descriptor afterwards, so that there is no moment
+    // at which it is reachable with the wrong mode. The directory is root-owned
+    // and not writable by the service user, so the path cannot be swapped.
+    let old = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o177));
+    let bound = UnixListener::bind(path);
+    rustix::process::umask(old);
+    let l = bound.map_err(|e| Error::io(format!("bind {}", path.display()), e))?;
     if let Some(gid) = gid {
-        rustix::fs::chown(path, None, Some(rustix::fs::Gid::from_raw(gid)))
+        rustix::fs::fchown(&l, None, Some(rustix::fs::Gid::from_raw(gid)))
             .map_err(|e| Error::io("chown the socket", std::io::Error::from(e)))?;
     }
+    rustix::fs::fchmod(&l, rustix::fs::Mode::from_raw_mode(mode))
+        .map_err(|e| Error::io("chmod the socket", std::io::Error::from(e)))?;
     Ok(l)
 }
 
+/// Connections served at once. The helper is used by one daemon and an
+/// operator; anything beyond this is refused rather than queued.
+const MAX_CONNECTIONS: usize = 16;
+
 pub fn serve(listener: UnixListener, shared: Arc<Shared>) {
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
+                use std::sync::atomic::Ordering::SeqCst;
+                if active.fetch_add(1, SeqCst) >= MAX_CONNECTIONS {
+                    active.fetch_sub(1, SeqCst);
+                    continue; // dropped: refused
+                }
                 let shared = shared.clone();
+                let active = active.clone();
                 std::thread::spawn(move || {
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(120)))
+                        .ok();
                     if let Err(e) = handle(stream, &shared) {
                         eprintln!("<4>cordial-netd: connection ended: {e}");
                     }
+                    active.fetch_sub(1, SeqCst);
                 });
             }
             Err(e) => eprintln!("<4>cordial-netd: accept: {e}"),
@@ -93,7 +113,7 @@ fn handle(stream: UnixStream, shared: &Shared) -> Result<()> {
         }
         reader.get_mut().set_limit(MAX_LINE as u64);
         let reply = match serde_json::from_str::<NetdEnvelope>(&line) {
-            Ok(env) => match dispatch(shared, env.req) {
+            Ok(env) => match dispatch_as(shared, uid, env.req) {
                 Ok(v) => ResponseEnvelope::ok(env.id, v),
                 Err(e) => ResponseEnvelope::err(env.id, &e),
             },
@@ -151,6 +171,18 @@ fn build_plan(
 }
 
 pub fn dispatch_public(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
+    dispatch(shared, req)
+}
+
+/// A request from a peer. Defining a tunnel (an endpoint and a key that every
+/// client in a group will be routed through) is the administrator's decision,
+/// so it needs root; the service user may plan, apply and remove.
+fn dispatch_as(shared: &Shared, uid: u32, req: NetdRequest) -> Result<serde_json::Value> {
+    if matches!(req, NetdRequest::PutNetwork { .. }) && uid != 0 {
+        return Err(Error::Denied(
+            "defining a network needs root: run `sudo cordialctl network add ...` (the manager and the panel cannot change where traffic is routed)".into(),
+        ));
+    }
     dispatch(shared, req)
 }
 

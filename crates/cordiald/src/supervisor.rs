@@ -34,7 +34,8 @@ fn timing(cfg: &Config) -> Timing {
 /// Whether a render node can be opened, remembered for half a minute: asking
 /// opens the device, and admission asks twice a second.
 fn has_render_node() -> bool {
-    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+        std::sync::Mutex::new(None);
     let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     match *c {
         Some((at, v)) if at.elapsed() < Duration::from_secs(30) => v,

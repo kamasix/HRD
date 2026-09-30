@@ -228,6 +228,11 @@ impl Secrets {
         if passphrase.is_empty() {
             return Err(Error::invalid("the passphrase is empty"));
         }
+        if create && passphrase.expose().chars().count() < 12 {
+            return Err(Error::invalid(
+                "a new keyring needs a passphrase of at least 12 characters: it is the only thing protecting every stored session",
+            ));
+        }
         let exists = self.keyring_files_exist();
         if !exists && !create {
             return Err(Error::not_found(
