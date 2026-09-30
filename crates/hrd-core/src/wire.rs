@@ -339,8 +339,12 @@ impl Client {
                 ResponseBody::Err { error, .. } => {
                     return Err(Error::from_wire(&error.code, error.message))
                 }
-                ResponseBody::Ok { .. } => {
-                    // The acknowledgement that precedes a stream.
+                ResponseBody::Ok { data, .. } => {
+                    // The acknowledgement that precedes a stream; it may carry
+                    // the first batch (the last log lines).
+                    if !on_event(data) {
+                        return Ok(());
+                    }
                 }
             }
         }

@@ -9,4 +9,20 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["tui"]
+# The terminal panel. Without it `cordialctl tui` says so and exits.
+tui = ["dep:ratatui", "dep:crossterm"]
+
 [dependencies]
+hrd-core = { path = "../hrd-core" }
+hrd-net = { path = "../hrd-net" }
+hrd-proc = { path = "../hrd-proc" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "net", "stdio", "termios", "std"] }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context", "suggestions"] }
+png = "0.17"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"], optional = true }
+crossterm = { version = "0.28", optional = true }

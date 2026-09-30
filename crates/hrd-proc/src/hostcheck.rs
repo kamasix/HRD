@@ -205,30 +205,35 @@ pub fn host_checks(layout: &Layout, cfg: &Config) -> Vec<Check> {
     }
 
     // Programs.
-    for (id, title, path, need) in [
+    let run_fix = "build the patched upstream client (docs/build.md) and install it at this path; the .deb does not contain it";
+    for (id, path, fix) in [
         (
-            "cordial-run",
             "cordial-run",
             PathBuf::from(&cfg.engine.cordial_run),
-            true,
+            run_fix,
         ),
         (
-            "cordial-enter",
             "cordial-enter",
             PathBuf::from(&cfg.engine.enter),
-            true,
+            "install the cordial-hrd package",
         ),
         (
             "cordial-import",
-            "cordial-import",
             PathBuf::from(&cfg.engine.importer),
-            true,
+            "install the cordial-hrd package",
         ),
     ] {
+        let (title, need) = (id, true);
         out.push(if is_exec(&path) {
             c(id, title, ok, path.display().to_string(), None)
         } else {
-            c(id, title, if need { Fail } else { Warn }, format!("{} is missing or not executable", path.display()), Some("install the packages (docs/install.md); cordial-run is built from the patched upstream tree (docs/build.md)"))
+            c(
+                id,
+                title,
+                if need { Fail } else { Warn },
+                format!("{} is missing or not executable", path.display()),
+                Some(fix),
+            )
         });
     }
     let enter = PathBuf::from(&cfg.engine.enter);

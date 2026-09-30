@@ -258,6 +258,7 @@ impl Secrets {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         let mut child = self.spawn_quiet(cmd)?;
+        self.remember(child.id());
         {
             let mut stdin = child
                 .stdin
@@ -283,6 +284,7 @@ impl Secrets {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        self.forget(child.id());
         let _ = child.kill();
         let _ = child.wait();
         Err(Error::Denied(format!(
@@ -298,15 +300,67 @@ impl Secrets {
             .retain_mut(|c| matches!(c.try_wait(), Ok(None)));
     }
 
-    /// Stop the keyring and the bus this daemon started. A daemon that was
-    /// restarted no longer holds them, and leaves them running.
+    fn procs_file(&self) -> PathBuf {
+        self.layout.secrets_run().join("procs.json")
+    }
+
+    fn read_idents(&self) -> Vec<(u32, u64)> {
+        fsutil::read_limited_opt(&self.procs_file(), 64 * 1024)
+            .ok()
+            .flatten()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    /// Record a process of ours by pid *and* start time, so that a later daemon
+    /// (which did not start it) can still end it without risking a reused pid.
+    fn remember(&self, pid: u32) {
+        let Some(t) = hrd_proc::procfs::start_ticks(pid) else {
+            return;
+        };
+        let mut v = self.read_idents();
+        v.retain(|(p, _)| *p != pid);
+        v.push((pid, t));
+        let _ = fsutil::write_json_atomic(&self.procs_file(), &v, 0o600);
+    }
+
+    fn forget(&self, pid: u32) {
+        let mut v = self.read_idents();
+        v.retain(|(p, _)| *p != pid);
+        let _ = fsutil::write_json_atomic(&self.procs_file(), &v, 0o600);
+    }
+
+    /// Stop the keyring and the bus, including ones an earlier daemon started.
+    /// The keyring is locked again afterwards: unlocking needs the passphrase.
     pub fn stop(&self) {
-        let mut ch = self.children.lock().unwrap_or_else(|e| e.into_inner());
-        for c in ch.iter_mut() {
-            let _ = c.kill();
-            let _ = c.wait();
+        {
+            let mut ch = self.children.lock().unwrap_or_else(|e| e.into_inner());
+            for c in ch.iter_mut() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            ch.clear();
         }
-        ch.clear();
+        for (pid, ticks) in self.read_idents() {
+            if hrd_proc::procfs::is_same_process(pid, ticks) {
+                if let Some(p) = rustix::process::Pid::from_raw(pid as i32) {
+                    let _ = rustix::process::kill_process(p, rustix::process::Signal::TERM);
+                }
+            }
+        }
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(3) && self.bus_up() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for (pid, ticks) in self.read_idents() {
+            if hrd_proc::procfs::is_same_process(pid, ticks) {
+                if let Some(p) = rustix::process::Pid::from_raw(pid as i32) {
+                    let _ = rustix::process::kill_process(p, rustix::process::Signal::KILL);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(self.procs_file());
+        let _ = std::fs::remove_file(self.bus_path());
     }
 
     fn item_paths(&self, profile: &Path) -> Result<Vec<String>> {

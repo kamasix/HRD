@@ -223,6 +223,8 @@ pub enum Request {
     },
 
     SecretsStatus,
+    /// Stop the keyring and its bus, which locks it. Refused while any client runs.
+    SecretsLock,
     /// Creates the keyring if it does not exist (`create: true`) or unlocks it.
     /// The passphrase is held in memory only for the duration of the call.
     SecretsUnlock {

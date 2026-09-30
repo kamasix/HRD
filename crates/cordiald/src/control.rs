@@ -294,6 +294,13 @@ fn dispatch(d: &Arc<Daemon>, conn: &mut Conn, req: Request) -> Result<Value> {
         ConfigGet => or::config_get(d),
         ConfigSet { changes } => or::config_set(d, changes),
         SecretsStatus => or::to(&d.secrets.status()),
+        SecretsLock => {
+            if d.lock().live.values().any(|l| l.rec.state.is_live()) {
+                return Err(Error::conflict("clients are running or queued; stop them first (they keep their session in the keyring while they run)"));
+            }
+            d.secrets.stop();
+            or::to(&d.secrets.status())
+        }
         SecretsUnlock { passphrase, create } => {
             let st = d.secrets.unlock(&passphrase, create)?;
             crate::auth::refresh_in_background(d.clone());
