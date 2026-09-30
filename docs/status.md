@@ -43,3 +43,27 @@ evidence that a session works.
 | arm64 | builds for the manager in principle | unverified; upstream lists aarch64 as untested |
 | SOCKS5 UDP ASSOCIATE backend | not implemented | TCP-only proxies are not a backend |
 | Automatic IP rotation, reconnect, anti-AFK, injector, account creation | not implemented, deliberately | [security.md](security.md) |
+
+## Known open issues from the code reviews
+
+Two independent reviews (security, correctness) were run and their findings
+fixed where stated in the commit log. These were **understood and not fixed**:
+
+* Some work still happens with the daemon's lock held (asset-tree copy, cgroup
+  creation, `fsync` of state files); a slow disk delays control requests.
+* Client logs are rotated only when the next run of an account starts; a very
+  chatty run grows its log during the run. The adoption replay looks at the last
+  8 MiB, so after a restart an old banner can be missed (state becomes `unknown`).
+* The log reader reads at most 256 KiB per 0.5 s tick per log and skips the oldest
+  bytes beyond that; a very noisy engine could push the decisive line out of view.
+* With the process-group fallback (no cgroup delegation) ownership is weaker:
+  orphans of a dead leader are not tracked, and a client that calls `setsid` is
+  not found. Use the packaged unit (`Delegate=yes`).
+* `config set` re-reads the configuration file, so it also applies unrelated
+  edits made to that file since the daemon started.
+* A sign-in run is stopped at the first signed-in screen; whether the client has
+  finished writing its session by then is unverified.
+* `cordial-enter` does not check the caller against the group assignment (see
+  security.md).
+* Everything that depends on the real engine's log lines, WireGuard, systemd and
+  a Debian 13 install is unverified at runtime.
