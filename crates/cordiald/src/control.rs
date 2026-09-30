@@ -72,32 +72,50 @@ pub fn lookup_gid(group: &str) -> Option<u32> {
         })
 }
 
-fn groups_of(pid: u32) -> Vec<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()
-        .and_then(|t| {
-            t.lines().find_map(|l| {
-                l.strip_prefix("Groups:").map(|g| {
-                    g.split_whitespace()
-                        .filter_map(|x| x.parse().ok())
-                        .collect()
-                })
+/// Is the user with this uid in the group with this gid? Answered from the
+/// account files, not from the peer's process, so a pid that was reused after the
+/// connection cannot change the answer.
+fn uid_in_group(uid: u32, gid: u32) -> bool {
+    let Ok(passwd) = std::fs::read_to_string("/etc/passwd") else { return false };
+    let Some((name, primary)) = passwd.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.get(2)?.parse::<u32>().ok()? == uid).then(|| (f[0].to_string(), f.get(3).and_then(|x| x.parse::<u32>().ok())))
+    }) else {
+        return false;
+    };
+    if primary == Some(gid) {
+        return true;
+    }
+    std::fs::read_to_string("/etc/group")
+        .map(|g| {
+            g.lines().any(|l| {
+                let f: Vec<&str> = l.split(':').collect();
+                f.get(2).and_then(|x| x.parse::<u32>().ok()) == Some(gid) && f.get(3).is_some_and(|m| m.split(',').any(|u| u == name))
             })
         })
-        .unwrap_or_default()
+        .unwrap_or(false)
 }
 
 fn allowed(cred: &PeerCred, cfg: &Config, socket_gid: Option<u32>) -> bool {
     cred.uid == 0
         || cred.uid == rustix::process::getuid().as_raw()
         || cfg.control.allowed_uids.contains(&cred.uid)
-        || socket_gid.is_some_and(|g| cred.gid == g || groups_of(cred.pid).contains(&g))
+        || socket_gid.is_some_and(|g| cred.gid == g || uid_in_group(cred.uid, g))
 }
 
 pub fn serve(d: Arc<Daemon>, listener: UnixListener) {
     static ACTIVE: AtomicUsize = AtomicUsize::new(0);
     listener.set_nonblocking(true).ok();
     while !d.shutdown.load(Ordering::Relaxed) {
+        // Sleep in poll(2) until a connection arrives or half a second passes,
+        // instead of waking twenty times a second to ask.
+        {
+            use rustix::event::{poll, PollFd, PollFlags};
+            let b = listener.as_fd();
+            let mut fds = [PollFd::new(&b, PollFlags::IN)];
+            let ts = rustix::event::Timespec { tv_sec: 0, tv_nsec: 500_000_000 };
+            let _ = poll(&mut fds, Some(&ts));
+        }
         match listener.accept() {
             Ok((s, _)) => {
                 s.set_nonblocking(false).ok();

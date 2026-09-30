@@ -1,0 +1,25 @@
+# Formatting, lints and the unit tests of this project's own code. It needs no
+# secret, builds no package and uploads no artifact: nothing from Roblox is ever
+# present in this repository, so there is nothing for CI to leak, and it stays
+# that way (no `upload-artifact`, no release step).
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
+      - name: Format
+        run: scripts/fmt.sh -- --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked

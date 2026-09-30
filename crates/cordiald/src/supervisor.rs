@@ -31,6 +31,21 @@ fn timing(cfg: &Config) -> Timing {
     }
 }
 
+/// Whether a render node can be opened, remembered for half a minute: asking
+/// opens the device, and admission asks twice a second.
+fn has_render_node() -> bool {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    match *c {
+        Some((at, v)) if at.elapsed() < Duration::from_secs(30) => v,
+        _ => {
+            let v = crate::spawn::find_render_node().is_some();
+            *c = Some((std::time::Instant::now(), v));
+            v
+        }
+    }
+}
+
 pub fn concurrency(d: &Daemon, cfg: &Config) -> u32 {
     if cfg.scheduler.max_concurrent_starts > 0 {
         return cfg.scheduler.max_concurrent_starts;
@@ -38,7 +53,7 @@ pub fn concurrency(d: &Daemon, cfg: &Config) -> u32 {
     let software = match cfg.engine.graphics {
         Graphics::Software => true,
         Graphics::Gpu => false,
-        Graphics::Auto => crate::spawn::find_render_node().is_none(),
+        Graphics::Auto => !has_render_node(),
     };
     auto_concurrent_starts(d.online_cpus, software)
 }
@@ -232,13 +247,27 @@ pub fn tick(d: &Daemon) {
 }
 
 pub fn run(d: Arc<Daemon>) {
-    let mut last_net = 0u64;
     while !d.shutdown.load(Ordering::Relaxed) {
         tick(&d);
-        if monotonic_ms().saturating_sub(last_net) > 10_000 {
-            last_net = monotonic_ms();
-            netops::refresh(&d);
-        }
         std::thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// Keep the cached view of each group's network fresh, off the supervisor's
+/// thread: a helper that hangs must never delay reading a client's log.
+pub fn spawn_net_refresh(d: Arc<Daemon>) {
+    std::thread::Builder::new()
+        .name("net-refresh".into())
+        .spawn(move || {
+            while !d.shutdown.load(Ordering::Relaxed) {
+                netops::refresh(&d);
+                for _ in 0..40 {
+                    if d.shutdown.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            }
+        })
+        .ok();
 }

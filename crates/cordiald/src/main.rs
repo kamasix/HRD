@@ -204,13 +204,7 @@ fn run(args: Args, layout: Layout) -> Result<()> {
             .spawn(move || control::serve(d2, listener))
             .ok();
     }
-    {
-        let d2 = d.clone();
-        std::thread::Builder::new()
-            .name("net-first".into())
-            .spawn(move || netops::refresh(&d2))
-            .ok();
-    }
+    supervisor::spawn_net_refresh(d.clone());
     eprintln!(
         "<6>cordiald: listening on {}",
         layout.control_socket().display()

@@ -84,7 +84,8 @@ pub fn apply(d: &Daemon, prune: bool) -> Result<Vec<ApplyOutcome>> {
 }
 
 pub fn status_of(d: &Daemon, groups: Vec<GroupName>) -> Result<Vec<GroupStatus>> {
-    d.netd.call(NetdRequest::Status { groups })
+    // A short timeout: a hung helper must not stall whoever asks.
+    d.netd.clone().with_timeout(std::time::Duration::from_secs(5)).call(NetdRequest::Status { groups })
 }
 
 /// Ask the helper about every group and cache the answer. Never called with the

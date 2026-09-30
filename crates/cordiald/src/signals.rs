@@ -39,7 +39,7 @@ pub enum Signal {
 }
 
 pub fn parse_line(line: &str) -> Option<Signal> {
-    if line.contains("LOADED in ") && line.trim_start().starts_with("LOADED in") {
+    if line.contains("LOADED in ") {
         return Some(Signal::EngineLoaded);
     }
     if let Some(rest) = after(line, "[roblox] app ready: ") {

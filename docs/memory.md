@@ -87,6 +87,25 @@ Only `AAsset_*` assets pass through this. Everything the engine downloads
 decoded inside the closed engine; it cannot be filtered without modifying the
 engine, and intercepting TLS to do so is not done and will not be.
 
+## Where each kind of data comes from, and what can be saved
+
+Roblox's Android client has four kinds of data that matter for memory. For each:
+where it comes from, who allocates and manages it, what this project does about it
+and what stays out of reach.
+
+| data | where from | who allocates / manages | what is done | outside Cordial's control |
+|---|---|---|---|---|
+| **1. starting resources in the APK** (`assets/`: fonts, shaders, the certificate bundle, Lua/content the app needs to start) | the APK; extracted once at import into a sealed read-only tree | `AAssetManager` emulation in `android/asset.rs` (open layer): today a decompressed `Vec`, leaked, per process | patch 0002 (shared file mapping), modes `minimal`+ | which assets the engine asks for; it may assume they exist (the certificate bundle and init content are required, nothing is stubbed or filtered) |
+| **2. resources the engine downloads** (meshes, textures, sounds, the experience's content) | Roblox's servers over TLS, by the engine's own curl stack | the closed engine's heap (mimalloc) and its on-disk cache | nothing inside the engine; the per-account cache directory keeps one account's files apart | everything: what is fetched, decoded, cached and freed is decided inside `libroblox.so`. TLS is never intercepted to filter it |
+| **3. replicated world state** | the game server, over the engine's UDP transport | the closed engine | nothing | entirely the experience and the engine |
+| **4. data to start and keep a real session** (cookies, identity, client settings, flags, the ~106 MB engine text) | the keyring, the client-settings fetch, `libroblox.so` | open layer for the stores, engine for the rest | engine text shared through the page cache; sessions in one encrypted store, never in a plain file | flag and settings payloads, the engine's own initialisation |
+
+Skipping an asset at the loader is only possible for names the open layer is asked
+for, and nothing here does it: a missing asset the engine expects is a crash or a
+silent wrong render, and no name was established as optional. The `minimal`
+mode therefore removes cost that is demonstrably unneeded for a window nobody
+looks at (surface size, present mode, desktop integration), not content.
+
 ## Modes
 
 Each mode is a list of environment variables that a program actually reads

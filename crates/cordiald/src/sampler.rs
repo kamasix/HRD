@@ -36,10 +36,17 @@ pub struct InstSample {
     pub members: Vec<MemberView>,
 }
 
+/// What the sampler publishes. Readers take this mutex briefly; the sampler never
+/// holds it while it reads `/proc`.
 #[derive(Default)]
 pub struct Samples {
     pub per: BTreeMap<AccountName, InstSample>,
     pub stats: StatsView,
+}
+
+/// The sampler's own memory between rounds, private to its thread.
+#[derive(Default)]
+pub struct Work {
     smaps: HashMap<AccountName, SmapsAgg>,
     cpu: Option<CpuWindow>,
     cg_prev: HashMap<AccountName, (u64, u64)>,
@@ -72,7 +79,7 @@ fn class_name(c: Class) -> &'static str {
     }
 }
 
-pub fn run_once(d: &Daemon) {
+pub fn run_once(d: &Daemon, w: &mut Work) {
     let cfg = d.cfg();
     let now_ms = monotonic_ms();
     let now = now_unix();
@@ -95,17 +102,15 @@ pub fn run_once(d: &Daemon) {
         read_cpu_psi(),
     );
 
-    let mut guard = d.samples.lock().unwrap_or_else(|e| e.into_inner());
-    let s = &mut *guard;
-    let cpu = s.cpu.get_or_insert_with(CpuWindow::new);
+    let cpu = w.cpu.get_or_insert_with(CpuWindow::new);
     cpu.begin_round();
-    let window_s = (s.last_ms != 0).then(|| now_ms.saturating_sub(s.last_ms) as f64 / 1000.0);
+    let window_s = (w.last_ms != 0).then(|| now_ms.saturating_sub(w.last_ms) as f64 / 1000.0);
 
     // Who gets a memory-map read this round: the stalest, a few at a time.
     let mut due: Vec<(u64, &AccountName)> = Vec::new();
     if cfg.stats.pss_interval_s > 0 {
         for t in &targets {
-            let age = s
+            let age = w
                 .smaps
                 .get(&t.id)
                 .map(|a| now.saturating_sub(a.at))
@@ -174,9 +179,9 @@ pub fn run_once(d: &Daemon) {
             });
         }
         if with_smaps {
-            s.smaps.insert(t.id.clone(), agg);
+            w.smaps.insert(t.id.clone(), agg);
         }
-        let last = s.smaps.get(&t.id).copied().unwrap_or_default();
+        let last = w.smaps.get(&t.id).copied().unwrap_or_default();
         let (cur, peak, swap_cg) = match &t.cg {
             Some(cg) => {
                 let m = cg.memory();
@@ -200,11 +205,11 @@ pub fn run_once(d: &Daemon) {
         // come and gone between two rounds.
         is.cpu_percent = match t.cg.as_ref().and_then(|c| c.cpu_usage_usec()) {
             Some(us) => {
-                let r = s.cg_prev.get(&t.id).and_then(|(u0, m0)| {
+                let r = w.cg_prev.get(&t.id).and_then(|(u0, m0)| {
                     (now_ms > *m0 && us >= *u0)
                         .then(|| (us - u0) as f64 / 1000.0 / (now_ms - m0) as f64 * 100.0)
                 });
-                s.cg_prev.insert(t.id.clone(), (us, now_ms));
+                w.cg_prev.insert(t.id.clone(), (us, now_ms));
                 r.or(sum_cpu)
             }
             None => sum_cpu,
@@ -212,13 +217,13 @@ pub fn run_once(d: &Daemon) {
         per.insert(t.id.clone(), is);
     }
     cpu.end_round();
-    s.cg_prev.retain(|k, _| per.contains_key(k));
-    s.smaps.retain(|k, _| per.contains_key(k));
+    w.cg_prev.retain(|k, _| per.contains_key(k));
+    w.smaps.retain(|k, _| per.contains_key(k));
 
     // The manager: this process, sampled on the same terms.
     let me = std::process::id();
     if let Some(ps) = stats::sample(me, cfg.stats.pss_interval_s > 0) {
-        let pct = cpu_self(s, &ps, now_ms);
+        let pct = cpu_self(w, &ps, now_ms);
         stats::add(&mut tot[0], &ps, pct);
     }
     let mut total = ClassStats::default();
@@ -236,13 +241,13 @@ pub fn run_once(d: &Daemon) {
     if cfg.stats.pss_interval_s == 0 {
         notes.push("PSS/USS sampling is off (stats.pss_interval_s = 0)".to_string());
     }
-    let cache = match s.disk {
+    let cache = match w.disk {
         Some((at, b)) if now.saturating_sub(at) < 120 => Some(b),
         _ => {
             let acct = disk::usage(&d.layout.state_dir.join("acct"), 500_000);
             let rt = disk::usage(&d.layout.runtime_store(), 500_000);
             let b = acct.allocated + rt.allocated;
-            s.disk = Some((now, b));
+            w.disk = Some((now, b));
             if acct.truncated || rt.truncated {
                 notes
                     .push("disk usage walk stopped early: the figure is a lower bound".to_string());
@@ -264,7 +269,7 @@ pub fn run_once(d: &Daemon) {
             )
         })
         .collect();
-    s.stats = StatsView {
+    let stats_view = StatsView {
         cpu_window_s: window_s,
         manager: tot[0].clone(),
         engines: tot[1].clone(),
@@ -281,12 +286,14 @@ pub fn run_once(d: &Daemon) {
         ksm: read_ksm(),
         notes,
     };
-    s.per = per;
-    s.last_ms = now_ms;
+    w.last_ms = now_ms;
+    let mut out = d.samples.lock().unwrap_or_else(|e| e.into_inner());
+    out.per = per;
+    out.stats = stats_view;
     let _ = psi_cpu; // kept for the scheduler, which reads its own copy
 }
 
-fn cpu_self(s: &mut Samples, ps: &stats::ProcSample, now_ms: u64) -> Option<f64> {
+fn cpu_self(s: &mut Work, ps: &stats::ProcSample, now_ms: u64) -> Option<f64> {
     s.cpu
         .as_mut()?
         .percent(ps.pid, ps.start_ticks, ps.cpu_ticks, now_ms)
@@ -318,8 +325,9 @@ pub fn spawn_thread(d: Arc<Daemon>) {
     std::thread::Builder::new()
         .name("sampler".into())
         .spawn(move || {
+            let mut work = Work::default();
             while !d.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                run_once(&d);
+                run_once(&d, &mut work);
                 let secs = d.cfg().stats.interval_s.max(1);
                 for _ in 0..secs * 4 {
                     if d.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
