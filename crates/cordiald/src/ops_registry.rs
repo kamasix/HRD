@@ -118,9 +118,13 @@ pub fn account_add(
     ] {
         fsutil::ensure_private_dir(&p, 0o700)?;
     }
-    inner.reg.accounts.insert(name.clone(), acct.clone());
-    d.save_registry(&inner)?;
+    // Memory and registry change together: a failed write leaves neither.
     let rec = hrd_core::model::InstanceRecord::new(name.clone(), now);
+    inner.reg.accounts.insert(name.clone(), acct.clone());
+    if let Err(e) = d.save_registry(&inner) {
+        inner.reg.accounts.remove(&name);
+        return Err(e);
+    }
     d.save_instance(&rec);
     inner.live.insert(name.clone(), Live::new(rec));
     to(&views::account(&inner, &acct))
@@ -179,7 +183,7 @@ pub fn account_remove(d: &Daemon, name: AccountName, confirm: String) -> Result<
         if !inner.reg.accounts.contains_key(&name) {
             return Err(Error::not_found(format!("no account {name}")));
         }
-        if inner.live.get(&name).is_some_and(|l| l.rec.state.is_live()) {
+        if inner.live.get(&name).is_some_and(|l| l.busy()) {
             return Err(Error::conflict(format!(
                 "{name} is running or queued; stop it first"
             )));
@@ -190,7 +194,7 @@ pub fn account_remove(d: &Daemon, name: AccountName, confirm: String) -> Result<
     // any more would be a secret nobody can find.
     let erased = erase_session(d, &name)?;
     let mut inner = d.lock();
-    if inner.live.get(&name).is_some_and(|l| l.rec.state.is_live()) {
+    if inner.live.get(&name).is_some_and(|l| l.busy()) {
         return Err(Error::conflict(format!(
             "{name} was started while it was being removed"
         )));
@@ -228,7 +232,7 @@ pub fn account_logout(d: &Daemon, name: AccountName) -> Result<Value> {
         if !inner.reg.accounts.contains_key(&name) {
             return Err(Error::not_found(format!("no account {name}")));
         }
-        if inner.live.get(&name).is_some_and(|l| l.rec.state.is_live()) {
+        if inner.live.get(&name).is_some_and(|l| l.busy()) {
             return Err(Error::conflict(format!(
                 "{name} is running or queued; stop it first"
             )));
@@ -384,7 +388,7 @@ pub fn group_set(
     let live = inner
         .live
         .values()
-        .any(|l| l.rec.group.as_ref() == Some(&name) && l.rec.state.is_live());
+        .any(|l| l.rec.group.as_ref() == Some(&name) && l.busy());
     if let Some(c) = capacity {
         if c == 0 || c > 10_000 {
             return Err(Error::invalid("capacity must be 1..=10000"));
@@ -452,8 +456,7 @@ pub fn group_assign(
         match inner.reg.accounts.get(a) {
             None if !create_missing => missing.push(a.to_string()),
             Some(acc) => {
-                if acc.group.as_ref() != Some(&group)
-                    && inner.live.get(a).is_some_and(|l| l.rec.state.is_live())
+                if acc.group.as_ref() != Some(&group) && inner.live.get(a).is_some_and(|l| l.busy())
                 {
                     return Err(Error::conflict(format!(
                         "{a} is running or queued; stop it before moving it to another group"

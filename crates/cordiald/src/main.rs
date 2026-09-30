@@ -176,6 +176,7 @@ fn run(args: Args, layout: Layout) -> Result<()> {
         events: Events::new(),
         shutdown: Arc::new(AtomicBool::new(false)),
         stop_after_instances: AtomicBool::new(false),
+        shutdown_decided: AtomicBool::new(false),
         started_at: now_unix(),
         online_cpus: online,
         samples: Mutex::new(Default::default()),
@@ -213,8 +214,11 @@ fn run(args: Args, layout: Layout) -> Result<()> {
     supervisor::run(d.clone());
 
     // Shutting down.
-    let stop = d.stop_after_instances.load(Ordering::Relaxed)
-        || cfg.scheduler.on_daemon_stop == hrd_core::config::OnDaemonStop::Stop;
+    let stop = if d.shutdown_decided.load(Ordering::Relaxed) {
+        d.stop_after_instances.load(Ordering::Relaxed)
+    } else {
+        d.cfg().scheduler.on_daemon_stop == hrd_core::config::OnDaemonStop::Stop
+    };
     if stop {
         let _ = ops_instances::stop_all(&d, false);
         let grace = d.cfg().scheduler.stop_grace_s + 10;

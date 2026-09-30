@@ -80,6 +80,12 @@ impl Live {
         }
     }
 
+    /// Live, or already decided over but with its process set not yet gone.
+    /// Anything that removes or rewires an account must wait for this to be false.
+    pub fn busy(&self) -> bool {
+        self.rec.state.is_live() || self.has_process() || self.stop.is_some()
+    }
+
     pub fn has_process(&self) -> bool {
         self.rec.process.is_some()
     }
@@ -131,6 +137,9 @@ pub struct Daemon {
     pub shutdown: Arc<AtomicBool>,
     /// Set with `shutdown`: stop every instance before exiting.
     pub stop_after_instances: AtomicBool,
+    /// Set when a shutdown request said explicitly what to do with the clients;
+    /// otherwise a signal uses the configuration as it is at that moment.
+    pub shutdown_decided: AtomicBool,
     pub started_at: u64,
     pub online_cpus: usize,
     pub samples: Mutex<crate::sampler::Samples>,

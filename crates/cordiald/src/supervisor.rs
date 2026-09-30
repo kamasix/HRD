@@ -71,9 +71,6 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
         // What the client says.
         if deciding {
             let mut lines = Vec::new();
-            if let Some(tail) = live.proc_tail.as_mut() {
-                lines.extend(tail.poll(LOG_BYTES_PER_TICK));
-            }
             let dir = runs::engine_log_dir(d, id);
             if let Some(tail) = live.engine_tail.as_mut() {
                 if !tail.path().is_file() {
@@ -81,6 +78,12 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
                         tail.set_path(p);
                     }
                 }
+                lines.extend(tail.poll(LOG_BYTES_PER_TICK));
+            }
+            // Engine lines first: a disconnect notice in the engine log normally
+            // comes before the rejoin the process log reports, and applying them
+            // in that order lets the rejoin cancel the notice.
+            if let Some(tail) = live.proc_tail.as_mut() {
                 lines.extend(tail.poll(LOG_BYTES_PER_TICK));
             }
             for line in lines {
@@ -167,6 +170,15 @@ fn admit(d: &Daemon, inner: &mut Inner, cfg: &Config) {
     let Some(head) = inner.queue.front().cloned() else {
         return;
     };
+    // A head that is no longer Queued was stopped or cancelled while waiting.
+    if inner
+        .live
+        .get(&head)
+        .is_none_or(|l| l.rec.state != State::Queued)
+    {
+        inner.queue.pop_front();
+        return;
+    }
     let now_ms = monotonic_ms();
     let conc = concurrency(d, cfg);
     let in_flight = inner
@@ -176,7 +188,10 @@ fn admit(d: &Daemon, inner: &mut Inner, cfg: &Config) {
             l.rec.state == State::Starting
                 || (l.rec.kind == RunKind::Login
                     && l.rec.state.expects_processes()
-                    && l.rec.signals.screen.is_none())
+                    && l.rec.signals.screen.is_none()
+                    // A sign-in that never shows a screen counts as starting for
+                    // two minutes, not for its whole timeout.
+                    && now_ms.saturating_sub(l.started_ms) < 120_000)
         })
         .count() as u32;
     let est = inner.est.estimate(cfg.scheduler.assumed_start_peak_mib);

@@ -251,7 +251,6 @@ fn login(ctx: &Ctx, name: AccountName, detach: bool, attach: bool, columns: u32)
         return Ok(());
     }
     println!("Sign-in console for {name}. Type 'help' for commands. Leaving with 'detach' keeps the client running; 'quit' stops it.");
-    let mut input = std::io::stdin().lock();
     let auto = true;
     show(ctx, &name, columns)?;
     loop {
@@ -279,7 +278,10 @@ fn login(ctx: &Ctx, name: AccountName, detach: bool, attach: bool, columns: u32)
         eprint!("login:{name}> ");
         let _ = std::io::stderr().flush();
         let mut line = String::new();
-        if input
+        // The lock is taken per line and released before any command runs:
+        // `password` reads stdin again and std's stdin lock is not reentrant.
+        if std::io::stdin()
+            .lock()
             .read_line(&mut line)
             .map_err(|e| Error::io("read", e))?
             == 0

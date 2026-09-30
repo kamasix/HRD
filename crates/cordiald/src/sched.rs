@@ -31,13 +31,13 @@ impl Estimator {
 
     /// What one more start is expected to add, in bytes. Until three starts
     /// have been measured the configured guess is the floor; afterwards the
-    /// largest recent observation plus 15 %. The value is an estimate of a
+    /// largest recent observation plus about 14 %. The value is an estimate of a
     /// peak, and says nothing about steady-state cost.
     pub fn estimate(&self, assumed_mib: u64) -> u64 {
-        let assumed = assumed_mib * MIB;
+        let assumed = assumed_mib.saturating_mul(MIB);
         let max = self.observed.iter().copied().max().unwrap_or(0);
         if self.observed.len() >= 3 {
-            max + max / 7
+            (max + max / 7).max(assumed / 4)
         } else {
             assumed.max(max)
         }

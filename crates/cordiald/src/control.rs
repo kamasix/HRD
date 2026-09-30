@@ -46,8 +46,7 @@ pub fn bind(layout: &Layout, cfg: &Config) -> Result<UnixListener> {
     }
     let l =
         UnixListener::bind(&path).map_err(|e| Error::io(format!("bind {}", path.display()), e))?;
-    let mode =
-        u32::from_str_radix(cfg.control.socket_mode.trim_start_matches('0'), 8).unwrap_or(0o660);
+    let mode = u32::from_str_radix(&cfg.control.socket_mode, 8).unwrap_or(0o660);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
         .map_err(|e| Error::io("chmod the control socket", e))?;
     if let Some(gid) = lookup_gid(&cfg.service.group) {
@@ -135,7 +134,7 @@ pub fn serve(d: Arc<Daemon>, listener: UnixListener) {
                 }
                 ACTIVE.fetch_add(1, Ordering::Relaxed);
                 let d = d.clone();
-                std::thread::Builder::new()
+                let spawned = std::thread::Builder::new()
                     .name("control".into())
                     .spawn(move || {
                         if let Err(e) = handle(&d, s) {
@@ -144,8 +143,10 @@ pub fn serve(d: Arc<Daemon>, listener: UnixListener) {
                             }
                         }
                         ACTIVE.fetch_sub(1, Ordering::Relaxed);
-                    })
-                    .ok();
+                    });
+                if spawned.is_err() {
+                    ACTIVE.fetch_sub(1, Ordering::Relaxed);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(50))
@@ -208,7 +209,14 @@ fn handle(d: &Arc<Daemon>, stream: UnixStream) -> Result<()> {
                     Err(e) => ResponseEnvelope::err(id, &e),
                 };
                 conn.drop_unclaimed_fds();
-                conn.send_json(&reply)?;
+                // An answer over the protocol's line limit must reach the
+                // client as an error, not as a closed connection.
+                if hrd_core::proto::encode_line(&reply).is_err() {
+                    let e = Error::invalid("the answer is larger than the 1 MiB protocol limit: ask for less (a smaller --lines, a filter, or fewer accounts)");
+                    conn.send_json(&ResponseEnvelope::err(id, &e))?;
+                } else {
+                    conn.send_json(&reply)?;
+                }
             }
         }
     }
@@ -229,6 +237,8 @@ fn dispatch(d: &Arc<Daemon>, conn: &mut Conn, req: Request) -> Result<Value> {
         DaemonInfo => doctor::info(d),
         DaemonDoctor => or::to(&doctor::checks(d)),
         Shutdown { stop_instances } => {
+            d.shutdown_decided
+                .store(stop_instances.is_some(), Ordering::Relaxed);
             let stop = stop_instances.unwrap_or(
                 d.cfg().scheduler.on_daemon_stop == hrd_core::config::OnDaemonStop::Stop,
             );
@@ -330,7 +340,7 @@ fn dispatch(d: &Arc<Daemon>, conn: &mut Conn, req: Request) -> Result<Value> {
         ConfigSet { changes } => or::config_set(d, changes),
         SecretsStatus => or::to(&d.secrets.status()),
         SecretsLock => {
-            if d.lock().live.values().any(|l| l.rec.state.is_live()) {
+            if d.lock().live.values().any(|l| l.busy()) {
                 return Err(Error::conflict("clients are running or queued; stop them first (they keep their session in the keyring while they run)"));
             }
             d.secrets.stop();
@@ -395,7 +405,13 @@ fn stream_logs(
     acct: hrd_core::ids::AccountName,
     lines: usize,
 ) -> Result<()> {
-    let first = oi::logs(d, acct.clone(), lines)?;
+    let first = match oi::logs(d, acct.clone(), lines) {
+        Ok(v) => v,
+        Err(e) => {
+            conn.send_json(&ResponseEnvelope::err(id, &e))?;
+            return Ok(());
+        }
+    };
     conn.send_json(&ResponseEnvelope::ok(id, first))?;
     let mut tail = logtail::Tail::from_end(d.layout.instance_log(&acct));
     while !d.shutdown.load(Ordering::Relaxed) {

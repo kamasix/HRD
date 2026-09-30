@@ -60,6 +60,8 @@ pub struct Secrets {
     layout: Layout,
     cfg: Mutex<(SecretBackend, String, String)>,
     children: Mutex<Vec<Child>>,
+    /// Serialises unlock and lock: two at once would each start a bus.
+    op: Mutex<()>,
 }
 
 impl Secrets {
@@ -72,6 +74,7 @@ impl Secrets {
                 cfg.secrets.keyring_daemon.clone(),
             )),
             children: Mutex::new(Vec::new()),
+            op: Mutex::new(()),
         }
     }
 
@@ -83,9 +86,13 @@ impl Secrets {
         format!("unix:path={}", self.bus_path().display())
     }
 
-    /// The bus address to give clients, only when the keyring is usable.
+    /// The bus address to give clients, only when the private bus answers a
+    /// connect. Cheap on purpose: the supervisor calls this with its lock held,
+    /// so it must not run `busctl` (which can wait for a hung keyring). Whether
+    /// the keyring is unlocked was checked, without the lock, when the start was
+    /// requested.
     pub fn bus_address(&self) -> Option<String> {
-        (self.status().state == SecretsState::Ready).then(|| self.address())
+        (self.backend() != SecretBackend::None && self.bus_up()).then(|| self.address())
     }
 
     fn backend(&self) -> SecretBackend {
@@ -202,6 +209,8 @@ impl Secrets {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         let child = self.spawn_quiet(cmd)?;
+        // By pid and start time too, so a later daemon can end the bus as well.
+        self.remember(child.id());
         self.children
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -233,6 +242,7 @@ impl Secrets {
                 "a new keyring needs a passphrase of at least 12 characters: it is the only thing protecting every stored session",
             ));
         }
+        let _op = self.op.lock().unwrap_or_else(|e| e.into_inner());
         let exists = self.keyring_files_exist();
         if !exists && !create {
             return Err(Error::not_found(
@@ -338,6 +348,7 @@ impl Secrets {
     /// Stop the keyring and the bus, including ones an earlier daemon started.
     /// The keyring is locked again afterwards: unlocking needs the passphrase.
     pub fn stop(&self) {
+        let _op = self.op.lock().unwrap_or_else(|e| e.into_inner());
         {
             let mut ch = self.children.lock().unwrap_or_else(|e| e.into_inner());
             for c in ch.iter_mut() {

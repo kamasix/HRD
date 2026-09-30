@@ -32,9 +32,20 @@ never in the repository, packages or CI artifacts.
 
 * `cordiald` and every client: the `cordial` user, never root. The daemon refuses
   to start as root (`--allow-root` exists for tests).
-* `cordial-netd`: root with three capabilities and `no_new_privs`; takes names,
-  not addresses or commands; locates `ip`, `wg`, `nft` in system directories and
-  requires them root-owned; runs them without a shell, with a cleared environment.
+* `cordial-netd`: root with three capabilities (one of them `CAP_SYS_ADMIN`,
+  which is close to root: treat a compromise of this process as a compromise of
+  the host) and `no_new_privs`. It takes no commands and no paths. It does take
+  a **WireGuard configuration** (its endpoint and keys) - but only from root:
+  `PutNetwork` is refused for every other caller, so neither the manager nor the
+  panel can change where a group's traffic goes (`sudo cordialctl network add`).
+  Planning, applying and removing groups is open to the service user, and works
+  only on networks root defined. Its socket is in the root-owned
+  `/run/cordial-hrd-netns/` (created `0600` and opened through the descriptor),
+  and every client of it checks that the peer is root before sending anything.
+  It locates `ip`, `wg`, `nft` in system directories, requires them root-owned,
+  and runs them without a shell, with a cleared environment. Private keys are
+  stored root-only; **the service user cannot read them**, but it can cause them
+  to be used (apply a group).
 * `cordial-enter`: one file capability, `cap_sys_admin`, executable by root and
   the service group only. It takes a group *name*, validates it as a slug, opens
   only a file under `/run/cordial-hrd-netns` (a constant: an option that chose the
@@ -44,9 +55,21 @@ never in the repository, packages or CI artifacts.
   `no_new_privs`, clears the ambient set, empties the capability sets and reads
   them back; only then does it `exec`. Tested as root and as an unprivileged user,
   including that it refuses a caller that has `no_new_privs` set (the capability is
-  then not granted) and that the child cannot re-enter another namespace.
+  then not granted). **Limits:** any process of the service user - including a
+  compromised client started *without* a group, or any client that can exec it
+  directly - can run `cordial-enter` for *any* group, because the wrapper does not
+  check the caller against the group's assignment. Clients started through it have
+  `no_new_privs` and cannot re-enter a different namespace, but the boundary
+  between groups is not enforced against a hostile same-user process. Do not use
+  groups as a security boundary between accounts you do not trust equally.
   The unit does **not** set `NoNewPrivileges` for this reason and instead bounds
   the capability set to `CAP_SYS_ADMIN`.
+* Settings that widen access (`service.*`, `control.*`, `secrets.*`, the program
+  paths, `engine.env`, `network.allow_unrouted`, `login.console`) can only be set
+  in the root-owned `/etc/cordial-hrd/cordiald.toml`. `config set` and the panel
+  refuse them, and the same keys in the user-writable overrides file are ignored
+  (with a log line). A corrupt overrides file is set aside as `.rejected`; the
+  daemon still starts.
 * The control socket: `0660`, group `cordial`; every connection is also checked
   with `SO_PEERCRED` (root, the daemon's user, configured uids, or a member of the
   socket's group). Whoever passes can do anything the manager can do.

@@ -157,7 +157,9 @@ pub fn on_signal(
             }
         }
         Signal::LaunchMissed => {
-            if !login {
+            // Only meaningful while a launch is pending; in a connected run the
+            // line cannot be about this session.
+            if !login && rec.state != State::Connected {
                 if rec.signals.signed_in_at.is_some() {
                     let why = "the app shell did not launch the experience (check the place id and access)";
                     set_state(rec, State::Failed, Some(why.into()), now);
@@ -195,15 +197,11 @@ pub fn on_signal(
             set_state(rec, State::Connected, Some(why), now);
         }
         Signal::Left => {
-            if !login {
-                rec.signals.disconnected_at = Some(now);
-                set_state(
-                    rec,
-                    State::Disconnected,
-                    Some("the client left the experience and returned to the app".into()),
-                    now,
-                );
-                fx.push(Effect::StopSet);
+            // Through the same grace as a disconnect notice: a teleport also
+            // leaves one server before joining the next, and a join within the
+            // grace cancels this.
+            if !login && rec.state != State::Starting {
+                tr.pending_disconnect_at.get_or_insert(now);
             }
         }
         Signal::Health { presents } => {
@@ -239,7 +237,7 @@ pub fn on_tick(rec: &mut InstanceRecord, tr: &mut Transient, t: &Timing, now: u6
             rec.signals.disconnected_at = Some(now);
             let why = match rec.signals.disconnect_code {
                 Some(c) => format!("the engine reported a disconnection (reason code {c}) and did not join again within {} s", t.disconnect_grace_s),
-                None => "the engine reported a disconnection".to_string(),
+                None => format!("the client left the experience and did not join another within {} s", t.disconnect_grace_s),
             };
             set_state(rec, State::Disconnected, Some(why), now);
             fx.push(Effect::StopSet);
@@ -432,11 +430,24 @@ mod tests {
     }
 
     #[test]
+    fn leaving_one_server_and_joining_the_next_is_not_a_disconnect() {
+        let mut r = rec(RunKind::Play);
+        let mut tr = Transient::default();
+        on_signal(&mut r, &mut tr, Signal::Joined { place: 7 }, 200);
+        on_signal(&mut r, &mut tr, Signal::Left, 210);
+        on_signal(&mut r, &mut tr, Signal::Joining { place: 8 }, 212);
+        on_tick(&mut r, &mut tr, &T, 400);
+        assert_ne!(r.state, State::Disconnected);
+    }
+
+    #[test]
     fn nothing_after_a_disconnect_revives_the_run() {
         let mut r = rec(RunKind::Play);
         let mut tr = Transient::default();
         on_signal(&mut r, &mut tr, Signal::Joined { place: 7 }, 200);
         on_signal(&mut r, &mut tr, Signal::Left, 210);
+        assert_eq!(r.state, State::Connected, "left waits for the grace");
+        on_tick(&mut r, &mut tr, &T, 400);
         assert_eq!(r.state, State::Disconnected);
         for s in [
             Signal::Joined { place: 7 },
@@ -507,6 +518,7 @@ mod tests {
         let mut tr = Transient::default();
         on_signal(&mut r, &mut tr, Signal::Joined { place: 7 }, 200);
         on_signal(&mut r, &mut tr, Signal::Left, 210);
+        on_tick(&mut r, &mut tr, &T, 400);
         let why = r.reason.clone();
         on_exit(
             &mut r,

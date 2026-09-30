@@ -120,13 +120,22 @@ time, and a pid whose start time differs is left alone.
 
 After a daemon restart the records are read, live sets are found again (cgroup,
 or pid plus start time) and **their state is re-derived by replaying the log from
-the run's banner line**, not taken from what was last written. The queue is not
-restored.
+the run's banner line** (the process log, then the engine log). Where the log
+says no more than "started", the state written before the restart is kept and
+labelled as carried over. A pending disconnect notice is not carried across a
+restart, because the two logs cannot be put in time order. A set whose run had
+already been decided over (failed, disconnected, stopped) but was still being
+taken down is finished off. The queue is not restored.
 
 ## The daemon's threads
 
 Main: the supervisor (twice a second: read logs, detect exits, advance stops,
 admit one start). A control-socket acceptor and one thread per connection. A
 sampler (stats). A periodic session-presence refresher. One mutex guards the
-registry, instance runtime state and queue; slow operations (helper calls, PSS
-reads, imports) run with it released.
+registry, instance runtime state and queue. Helper calls, PSS reads and imports
+run with it released. **Not everything does:** while a start is admitted the
+supervisor holds it across creating the cgroup, copying the asset tree and
+writing state files (fsync), and a slow disk delays every control request for
+that long. The private-bus address is checked with a plain `connect`, never with
+`busctl`, for this reason. Instances whose process set is still being stopped
+cannot be removed, re-grouped or started again until it is gone.

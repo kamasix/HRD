@@ -261,6 +261,24 @@ impl Client {
         RequestEnvelope { id, request }
     }
 
+    /// The answer to request `id`. Answers to earlier requests (one that timed
+    /// out and was answered late) are skipped, so a single timeout cannot leave
+    /// every later call reading the previous call's reply.
+    fn read_response_for(&mut self, id: u64) -> Result<ResponseEnvelope> {
+        loop {
+            let r = self.read_response()?;
+            if r.id == id || r.id == 0 {
+                return Ok(r);
+            }
+            if r.id > id {
+                return Err(Error::Protocol(format!(
+                    "the daemon answered request {} while {id} was outstanding",
+                    r.id
+                )));
+            }
+        }
+    }
+
     fn read_response(&mut self) -> Result<ResponseEnvelope> {
         match self.conn.read_line()? {
             None => Err(Error::unavailable(
@@ -284,7 +302,7 @@ impl Client {
     pub fn call_value(&mut self, request: Request) -> Result<serde_json::Value> {
         let env = self.envelope(request);
         self.conn.send_json(&env)?;
-        let r = self.read_response()?;
+        let r = self.read_response_for(env.id)?;
         self.finish(r)
     }
 
@@ -304,7 +322,7 @@ impl Client {
         let env = self.envelope(request);
         let line = encode_line(&env)?;
         self.conn.send_with_fds(&line, fds)?;
-        let r = self.read_response()?;
+        let r = self.read_response_for(env.id)?;
         let v = self.finish(r)?;
         serde_json::from_value(v).map_err(|e| {
             Error::Protocol(format!("the daemon's answer has an unexpected shape: {e}"))

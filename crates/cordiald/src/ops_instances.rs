@@ -91,7 +91,11 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
             .get(g)
             .ok_or_else(|| Error::not_found(format!("no group {g}")))?
             .clone();
-        let acc = inner.reg.accounts.get(account).expect("checked");
+        let acc = inner
+            .reg
+            .accounts
+            .get(account)
+            .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
         if acc.group.as_ref() != Some(g) {
             let members = inner
                 .reg
@@ -144,7 +148,7 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
             .reg
             .accounts
             .get(account)
-            .expect("checked")
+            .ok_or_else(|| Error::not_found(format!("no account {account}")))?
             .auth
             .clone();
         if matches!(auth.status, AuthStatus::None | AuthStatus::Required) {
@@ -152,9 +156,9 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
             let l = inner
                 .live
                 .get_mut(account)
-                .expect("live entry exists for every account");
+                .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
             let from = l.rec.state;
-            if l.rec.state.can_start() {
+            if l.rec.state.can_start() && !l.has_process() && l.stop.is_none() {
                 set_state(
                     &mut l.rec,
                     State::AuthRequired,
@@ -174,11 +178,19 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
         .values()
         .filter(|l| l.rec.state.is_live())
         .count() as u32;
-    let l = inner.live.get(account).expect("live entry");
+    let l = inner
+        .live
+        .get(account)
+        .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
     if !l.rec.state.can_start() {
         return Err(Error::conflict(format!(
             "{account} is {} and cannot be started; stop it first",
             l.rec.state
+        )));
+    }
+    if l.has_process() || l.stop.is_some() {
+        return Err(Error::conflict(format!(
+            "the previous process set of {account} is still being stopped; try again in a few seconds"
         )));
     }
     if live_total >= cfg.scheduler.max_instances {
@@ -198,7 +210,10 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
         inner.reg.accounts.get(account).and_then(|a| a.mode),
         ask.mode,
     );
-    let l = inner.live.get_mut(account).expect("live entry");
+    let l = inner
+        .live
+        .get_mut(account)
+        .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
     let from = l.rec.state;
     l.rec.run += 1;
     l.rec.kind = ask.kind;
@@ -224,11 +239,11 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
         inner.queue.push_back(account.clone());
     }
     let samples = d.samples.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(views::instance(
-        inner,
-        &samples,
-        inner.live.get(account).expect("live entry"),
-    ))
+    let l = inner
+        .live
+        .get(account)
+        .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
+    Ok(views::instance(inner, &samples, l))
 }
 
 pub fn instance_start(

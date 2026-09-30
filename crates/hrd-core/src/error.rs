@@ -74,7 +74,7 @@ impl Error {
     }
 
     /// Process exit status for `cordialctl`. Documented in `--help` and in
-    /// docs/cli.md; scripts are entitled to rely on these.
+    /// docs/operations.md; scripts are entitled to rely on these.
     pub fn exit_code(&self) -> u8 {
         match self {
             Error::Internal(_) | Error::Io { .. } | Error::Protocol(_) => 1,
@@ -82,8 +82,8 @@ impl Error {
             Error::NotFound(_) => 3,
             Error::Conflict(_) => 4,
             Error::Unavailable(_) => 5,
-            Error::Denied(_) => 6,
-            Error::AuthRequired(_) => 7,
+            Error::AuthRequired(_) => 6,
+            Error::Denied(_) => 7,
         }
     }
 
@@ -190,6 +190,13 @@ mod tests {
             assert_eq!(back.code(), e.code());
             assert_eq!(back.exit_code(), e.exit_code());
         }
+    }
+
+    #[test]
+    fn exit_codes_match_the_documented_table() {
+        assert_eq!(Error::AuthRequired("x".into()).exit_code(), 6);
+        assert_eq!(Error::Denied("x".into()).exit_code(), 7);
+        assert_eq!(Error::Unavailable("x".into()).exit_code(), 5);
     }
 
     #[test]

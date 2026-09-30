@@ -177,12 +177,11 @@ pub fn finalize(d: &Daemon, inner: &mut Inner, id: &AccountName) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
-    if !live.start_recorded {
-        if let Some(p) = live.rec.start_peak_bytes {
-            inner.est.record(p);
-        }
-        live.start_recorded = true;
-    }
+    // A run that died while still starting (a locked profile, a missing file)
+    // peaked at almost nothing; counting it would teach the scheduler that
+    // starts are cheap. Only runs that got past Starting are recorded, in the
+    // supervisor.
+    live.start_recorded = true;
     let live = inner.live.get_mut(id).expect("still present");
     let _ = std::fs::remove_dir_all(d.layout.instance_run(id));
     live.proc_tail = None;
@@ -393,7 +392,9 @@ pub fn spawn_run(d: &Daemon, inner: &mut Inner, id: &AccountName) -> Result<()> 
         build_dir: &build.dir,
         graphics: &graphics,
         lavapipe_icd: icd.as_deref(),
-        dbus_address: d.secrets.bus_address(),
+        dbus_address: Some(d.secrets.bus_address().ok_or_else(|| {
+            Error::unavailable("the secret store went away between the request and the start; unlock it again (`cordialctl secrets unlock`)")
+        })?),
         secret_store_keyring: true,
     })?;
     let log = open_log(d, id, run)?;

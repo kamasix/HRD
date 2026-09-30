@@ -126,7 +126,8 @@ allow_unrouted = false
 handshake_max_age_s = 180
 
 [logs]
-# Client logs are rotated (copy-truncate to .1) at this size.
+# A client log larger than this is moved to .1 when the next run of that account starts
+# (it is not rotated while a run is in progress).
 max_bytes = 16777216
 
 [login]

@@ -412,6 +412,16 @@ impl Ctx {
 }
 
 fn main() -> ExitCode {
+    // `cordialctl status | head`: a closed pipe ends the program quietly instead
+    // of aborting with a panic message (Rust ignores SIGPIPE, so println! panics).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let text = info.to_string();
+        if text.contains("failed printing to std") {
+            std::process::exit(0);
+        }
+        default_hook(info);
+    }));
     let cli = Cli::parse();
     let layout = Layout::from_env();
     let ctx = Ctx {

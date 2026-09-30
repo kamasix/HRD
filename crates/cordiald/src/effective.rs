@@ -75,7 +75,24 @@ pub fn load(l: &Layout) -> Result<(Config, Value)> {
             l.config_file().display()
         );
     }
-    Ok((build(base_value(l)?, &over)?, over))
+    let base = base_value(l)?;
+    match build(base.clone(), &over) {
+        Ok(c) => Ok((c, over)),
+        Err(e) if over.as_object().is_some_and(|o| !o.is_empty()) => {
+            // A bad overrides file must not keep the daemon down (systemd would
+            // restart-loop while clients run unsupervised). Set it aside, say
+            // so, and start from the administrator's file alone.
+            let bad = overrides_file(l).with_extension("json.rejected");
+            let _ = std::fs::rename(overrides_file(l), &bad);
+            eprintln!(
+                "<3>cordiald: config-overrides.json is not valid ({e}); moved to {} and ignored",
+                bad.display()
+            );
+            let empty = Value::Object(Map::new());
+            Ok((build(base, &empty)?, empty))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Settings that widen who may operate the daemon, which programs it runs, or

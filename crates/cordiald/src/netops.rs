@@ -50,7 +50,7 @@ fn live_in_group(inner: &Inner, g: &GroupName) -> usize {
     inner
         .live
         .values()
-        .filter(|l| l.rec.group.as_ref() == Some(g) && (l.rec.state.is_live()))
+        .filter(|l| l.rec.group.as_ref() == Some(g) && l.busy())
         .count()
 }
 

@@ -71,7 +71,29 @@ pub fn adopt_all(d: &Daemon, inner: &mut Inner) {
                     d.changed(&mut live, from);
                 }
             }
-            _ => {}
+            _ => {
+                // The earlier daemon had already decided this run was over
+                // (failed, disconnected, stopped...) and was taking its process
+                // set down when it went away. If the set is still there, finish
+                // the job instead of reporting an ended run that is still running.
+                if live.rec.process.is_some() {
+                    let (is_alive, cg) = alive(&live.rec);
+                    if is_alive {
+                        live.cg = cg;
+                        live.start_recorded = true;
+                        live.proc_tail = None;
+                        live.engine_tail = None;
+                        runs::begin_stop(&mut live, false, false);
+                    } else {
+                        if let Some(cg) = cg {
+                            let _ = cg.remove();
+                        }
+                        live.rec.process = None;
+                        let _ = std::fs::remove_dir_all(d.layout.instance_run(&id));
+                        d.changed(&mut live, from);
+                    }
+                }
+            }
         }
         inner.live.insert(id, live);
     }
@@ -137,6 +159,11 @@ fn adopt_running(d: &Daemon, live: &mut Live, cg: Option<Cgroup>, now: u64) {
             machine::set_state(&mut live.rec, State::Unknown, Some("adopted after a manager restart; the log does not show this run, so its state is not known".into()), now);
         }
     }
+    // The two logs are replayed one after the other, so a notice in the engine
+    // log can be applied after a join in the process log that came later in
+    // real time. A pending disconnect is therefore not carried across a restart:
+    // if the client really left, the process exit or "left" line says so.
+    tr.pending_disconnect_at = None;
     live.tr = tr;
     live.rec.started_at = saved.started_at;
     live.rec.process = saved.process;

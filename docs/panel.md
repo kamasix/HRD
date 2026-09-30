@@ -1,12 +1,14 @@
 # The web panel (optional)
 
 The panel lets you do from a browser what `cordialctl` does: fleet status and
-statistics, accounts and the sign-in screen, groups, networks (including
-importing a WireGuard file), the Roblox runtime (including uploading an APK),
+statistics, accounts and the sign-in screen, groups, networks (listing, applying; defining a WireGuard
+network needs root and is done with `sudo cordialctl network add`), the Roblox runtime (including uploading an APK),
 settings, the secret store, and the doctor. It is **off until you set it up**, is
 a separate program (`cordial-panel`) and a separate service, and has no authority
-of its own: it is a client of the same control socket, as the same unprivileged
-user.
+beyond what the control socket gives any member of the service group: it is a
+client of that socket, as the same unprivileged user. It cannot define a WireGuard
+network (that needs root: `sudo cordialctl network add`), cannot change the
+protected settings (see security.md) and needs the file-based token to log in.
 
 ## Set it up
 
@@ -24,7 +26,8 @@ sudo -u cordial cordial-panel init --listen 10.66.0.2 --san 203.0.113.5
 * It prints, once: the URL, a **login token** (256 random bits; only its SHA-256
   is stored) and the certificate's SHA-256 fingerprint. `cordial-panel show`
   prints the URL and fingerprint again; `cordial-panel reset-token` makes a new
-  token.
+  token; the running panel adopts it at the next login attempt and ends every
+  session opened with the old one.
 
 ```
 sudo systemctl enable --now cordial-panel
