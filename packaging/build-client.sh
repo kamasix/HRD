@@ -21,6 +21,13 @@ arch=$(dpkg --print-architecture)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+# The patched copy lives outside this repository, so rustup would not find
+# rust-toolchain.toml and would have no default; use the pinned version.
+if command -v rustup >/dev/null 2>&1; then
+    RUSTUP_TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
+    export RUSTUP_TOOLCHAIN
+fi
+
 patches/cordial/apply.sh "$work/src"
 (
     cd "$work/src"
