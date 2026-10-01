@@ -49,8 +49,8 @@ evidence that a session works.
 Two independent reviews (security, correctness) were run and their findings
 fixed where stated in the commit log. These were **understood and not fixed**:
 
-* Some work still happens with the daemon's lock held (asset-tree copy, cgroup
-  creation, `fsync` of state files); a slow disk delays control requests.
+* Some work still happens with the daemon's lock held (a few directory creations,
+  cgroup creation, `fsync` of state files); a slow disk delays control requests.
 * With the process-group fallback (no cgroup delegation) ownership is weaker: a
   client that calls `setsid` leaves the group and is not found. Orphans left in
   the group by a dead leader are tracked. Use the packaged unit (`Delegate=yes`).
