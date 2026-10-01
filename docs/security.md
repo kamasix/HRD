@@ -106,5 +106,8 @@ a sign-in client, switchable off.
 
 ## Reporting
 
-Nothing here has been security-reviewed by anyone else. [status.md](status.md)
-says what was run. Report problems privately to the repository owner.
+No person has security-reviewed any of this. Separate automated review passes read
+the code (the group model, the network helper and the packages, the command line,
+the page) and their findings were fixed; that is not an audit.
+[status.md](status.md) says what was run. Report problems privately to the
+repository owner.

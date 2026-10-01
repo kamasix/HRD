@@ -193,4 +193,8 @@ pre { background: var(--soft); border: 1px solid var(--line); border-radius: 6px
   .pgfoot { padding-left: 14px; }
   .kv { grid-template-columns: 1fr; }
 }
+@media (max-width: 360px) {
+  .top { padding: 0 8px; gap: 6px; }
+  .tabs a { padding: 6px 7px; }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -39,9 +39,11 @@ async function raw(path, opts) {
   let j = null;
   try { j = await r.json(); } catch (_) { /* not JSON */ }
   if (r.status === 401 && path !== '/api/login') { csrf = null; showLogin(); throw new Error('Zaloguj się ponownie'); }
+  if (r.status === 403 && j && j.error && /CSRF/.test(j.error.message)) { try { csrf = (await raw('/api/session')).csrf; } catch (_) { /* 401 shows the login */ } throw new Error('Sesja została odświeżona (zalogowano w innej karcie): spróbuj jeszcze raz'); }
   if (!j || j.ok === false) throw new Error(j && j.error ? j.error.message : 'HTTP ' + r.status);
   return j.data;
 }
+const single = (fn) => { let on = false; return async (...a) => { if (on) return undefined; on = true; try { return await fn(...a); } finally { on = false; } }; };
 const hdr = () => ({ 'Content-Type': 'application/json', 'X-CSRF': csrf });
 const call = (cmd, args) => raw('/api/call', { method: 'POST', headers: hdr(), body: JSON.stringify(args === undefined ? { cmd } : { cmd, args }) });
 const post = (path, body) => raw(path, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
@@ -61,6 +63,9 @@ function age(s) {
 const when = (t) => (t ? new Date(t * 1000).toLocaleString('pl-PL') : '–');
 const orDash = (v) => (v == null || v === '' ? '–' : v);
 const plural = (n, one, few, many) => (n === 1 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+
+// A Place ID as the daemon accepts it: a positive integer a JSON consumer holds exactly.
+const placeOk = (v) => /^[1-9][0-9]{0,15}$/.test(v) && Number.isSafeInteger(Number(v));
 
 // A name as the daemon accepts it: lowercase letters, digits and '-', starting
 // with a letter, at most 24 characters. Typing "Adopt Me" gives "adopt-me".
@@ -148,8 +153,12 @@ function syncKeyed(parent, items, keyOf, make, store) {
     els.push(c.el);
   }
   for (const k of [...store.keys()]) if (!seen.has(k)) store.delete(k);
-  const now = [...parent.children];
-  if (now.length !== els.length || now.some((n, i) => n !== els[i])) parent.replaceChildren(...els);
+  // Reconcile in place: what is gone is removed first, so that nothing that stays is
+  // moved (moving a node loses the focus and the caret of an input inside it).
+  const keep = new Set(els);
+  for (const n of [...parent.childNodes]) if (!keep.has(n)) n.remove();
+  let ref = parent.firstChild;
+  for (const el of els) { if (el === ref) ref = ref.nextSibling; else parent.insertBefore(el, ref); }
 }
 
 // ------------------------------------------------------------------- frame
@@ -169,6 +178,8 @@ function renderTop(active) {
 
 function showLogin() {
   clearInterval(timer);
+  document.onvisibilitychange = null;
+  refreshHome = null;
   const tok = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Token logowania', required: true, 'aria-label': 'Token logowania' });
   const form = h('form', { on: { submit: async (ev) => {
     ev.preventDefault();
@@ -217,6 +228,7 @@ async function viewHome(root) {
   const summary = h('div', { class: 'summary' });
   const list = h('div', { class: 'groups' });
   const loose = h('section', { class: 'loose' }, h('h2', {}, 'Bez grupy'));
+  loose.hidden = true;
   const looseBox = h('div', { class: 'accts' });
   loose.append(looseBox);
   const empty = h('div', { class: 'empty' },
@@ -279,7 +291,8 @@ async function viewHome(root) {
     let cur = first;
     const name = first.proxy_group.name;
     const rows = new Map();
-    const open = () => (openState.get(name) !== undefined ? openState.get(name) : cur.accounts.length <= 8);
+    const initiallyOpen = first.accounts.length <= 8;
+    const open = () => (openState.get(name) !== undefined ? openState.get(name) : initiallyOpen);
     const chev = btn('', 'chev', () => { openState.set(name, !open()); paint(); }, { 'aria-label': 'Pokaż konta ' + name });
     const meta = h('span', { class: 'pgmeta' });
     let metaSig = '';
@@ -344,20 +357,20 @@ async function viewHome(root) {
     let cur = first;
     const name = first.group.name;
     const pgs = new Map();
-    let dirty = false;
+    let shown = '';
+    let saving = null;
     const place = h('input', { class: 'place', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Place ID', 'aria-label': 'Place ID grupy ' + name });
-    const savePlace = async () => {
+    const doSave = async () => {
       const v = place.value.trim();
-      const stored = cur.group.place_id == null ? '' : String(cur.group.place_id);
-      if (v === stored) { dirty = false; return true; }
-      if (v !== '' && !/^[0-9]+$/.test(v)) { toast('Place ID to same cyfry', true); return false; }
+      if (v === shown) return true; // untouched: never write a stale value over the daemon's
+      if (v !== '' && !placeOk(v)) { toast('Place ID to liczba dodatnia (do 16 cyfr)', true); return false; }
       const r = await act(() => call('group_set', { name, place_id: v === '' ? null : Number(v), clear_place_id: v === '', mode: null, clear_mode: false, note: null }), v === '' ? 'Usunięto Place ID' : 'Zapisano Place ID');
-      if (r === undefined) return false;
-      dirty = false; cur = { ...cur, group: r };
+      if (r === undefined) { place.value = shown; return false; }
+      shown = r.place_id == null ? '' : String(r.place_id); place.value = shown; cur = { ...cur, group: r };
       refresh();
       return true;
     };
-    place.addEventListener('input', () => { dirty = true; });
+    const savePlace = () => (saving = saving || doSave().finally(() => { saving = null; }));
     place.addEventListener('change', savePlace);
     place.addEventListener('keydown', (e) => { if (e.key === 'Enter') place.blur(); });
     const modeTag = h('span', { class: 'tag' });
@@ -390,7 +403,7 @@ async function viewHome(root) {
     function update(g) {
       cur = g;
       const v = g.group;
-      if (!dirty && document.activeElement !== place) place.value = v.place_id == null ? '' : String(v.place_id);
+      if (!saving && document.activeElement !== place) { shown = v.place_id == null ? '' : String(v.place_id); place.value = shown; }
       modeTag.textContent = v.mode ? 'tryb ' + v.mode : '';
       modeTag.hidden = !v.mode;
       const connected = g.proxy_groups.reduce((n, p) => n + p.accounts.filter((a) => a.state === 'connected').length, 0);
@@ -410,7 +423,8 @@ async function viewHome(root) {
     if (busy || document.hidden) return;
     busy = true;
     try {
-      const [ov, st] = await Promise.all([call('overview'), call('stats', { filter: {} })]);
+      const [ov, st0] = await Promise.all([call('overview'), call('stats', { filter: {} }).catch(() => null)]);
+      const st = st0 || {};
       last = ov;
       const all = [...ov.groups.flatMap((g) => g.proxy_groups.flatMap((p) => p.accounts)), ...ov.unassigned];
       const connected = all.filter((a) => a.state === 'connected').length;
@@ -438,9 +452,9 @@ async function viewHome(root) {
     busy = false;
   }
   refreshHome = refresh;
-  await refresh();
   timer = setInterval(refresh, 3000);
   document.onvisibilitychange = () => { if (!document.hidden) refresh(); };
+  await refresh();
 }
 
 // ------------------------------------------------------------------ dialogs
@@ -452,15 +466,15 @@ function newGroupModal() {
   const err = h('div', { class: 'err' });
   const refreshId = () => { id.textContent = name.value.trim() ? 'Nazwa w systemie: ' + (slug(name.value) || '–') : 'Małe litery, cyfry i myślnik.'; };
   name.addEventListener('input', refreshId); refreshId();
-  const submit = async () => {
+  const submit = single(async () => {
     const n = slug(name.value);
     const p = place.value.trim();
     err.textContent = '';
     if (!n) { err.textContent = 'Podaj nazwę grupy.'; return; }
-    if (p && !/^[0-9]+$/.test(p)) { err.textContent = 'Place ID to same cyfry.'; return; }
+    if (p && !placeOk(p)) { err.textContent = 'Place ID to liczba dodatnia (do 16 cyfr).'; return; }
     const r = await act(() => call('group_create', { name: n, place_id: p ? Number(p) : null, mode: null, note: null }), 'Utworzono grupę ' + n);
     if (r) { close(); refreshHome && refreshHome(); }
-  };
+  });
   const close = modal('Nowa grupa',
     h('label', { class: 'field' }, 'Nazwa', name), id,
     h('label', { class: 'field' }, 'Place ID', place), err,
@@ -483,7 +497,7 @@ function groupSettingsModal(g) {
       btn('Anuluj', '', () => close()),
       btn('Zapisz', 'primary', async () => {
         const p = place.value.trim();
-        if (p && !/^[0-9]+$/.test(p)) { err.textContent = 'Place ID to same cyfry.'; return; }
+        if (p && !placeOk(p)) { err.textContent = 'Place ID to liczba dodatnia (do 16 cyfr).'; return; }
         const r = await act(() => call('group_set', {
           name: g.name, place_id: p ? Number(p) : null, clear_place_id: !p && g.place_id != null,
           mode: mode.value || null, clear_mode: !mode.value && !!g.mode, note: note.value.trim(),
@@ -575,12 +589,14 @@ function addAccountsModal(node) {
   const close = modal('Dodaj konta do ' + p.name,
     h('p', { class: 'hint' }, 'Wolnych miejsc: ' + free + ' z ' + p.capacity + '. Dodajesz tylko profile swoich własnych kont; zalogujesz je osobno przyciskiem „Zaloguj”. Konta, które już istnieją (np. bez grupy), zostaną przeniesione tutaj.'),
     names, err,
-    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Dodaj', 'primary', async () => {
-      const list = [...new Set(names.value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Dodaj', 'primary', single(async () => {
+      const list = [...new Set(names.value.split(/[\n,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
       if (!list.length) { err.textContent = 'Wpisz co najmniej jedną nazwę.'; return; }
+      const bad = list.find((x) => !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(x));
+      if (bad) { err.textContent = 'Zła nazwa „' + bad + '”: małe litery, cyfry, - i _, bez spacji, do 32 znaków.'; return; }
       const r = await act(() => call('account_assign', { accounts: list, proxy_group: p.name, create_missing: true }));
       if (r) { toast('Dodano: ' + r.assigned + (r.unchanged ? ', już były: ' + r.unchanged : '')); close(); refreshHome && refreshHome(); }
-    })));
+    }))));
 }
 
 function moveAccountModal(a) {
@@ -589,6 +605,7 @@ function moveAccountModal(a) {
     ...allProxyGroups().map((n) => h('option', { value: n.proxy_group.name, selected: n.proxy_group.name === a.proxy_group, disabled: n.proxy_group.name !== a.proxy_group && n.proxy_group.assigned >= n.proxy_group.capacity },
       n.proxy_group.group + ' / ' + n.proxy_group.name + ' (' + n.proxy_group.assigned + '/' + n.proxy_group.capacity + ')')),
   ]);
+  if (!a.proxy_group) { const o = [...sel.options].find((x) => x.value && !x.disabled); if (o) sel.value = o.value; }
   const close = modal('Przenieś ' + a.id,
     h('label', { class: 'field' }, 'Do grupy proxy', sel),
     h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Przenieś', 'primary', async () => {
@@ -601,8 +618,9 @@ function moveAccountModal(a) {
 // proxy group of the same name) or one defined earlier that nothing uses yet.
 async function addProxyModal(group) {
   const status = await raw('/api/proxy/status').catch(() => ({ helper: false, can_define: false }));
+  if (!csrf) return; // the call hit a 401 and the login screen is up
   const free = last ? last.free_networks : [];
-  const taken = new Set([...allProxyGroups().map((n) => n.proxy_group.name), ...(last ? last.free_networks.map((n) => n.network.name) : [])]);
+  const taken = new Set([...allProxyGroups().flatMap((n) => [n.proxy_group.name, n.proxy_group.network]).filter(Boolean), ...(last ? last.free_networks.map((n) => n.network.name) : [])]);
   const useNew = status.can_define || !free.length;
   const mode = { v: useNew ? 'new' : 'old' };
 
@@ -655,7 +673,7 @@ async function addProxyModal(group) {
     sync();
   }
   const seg = (v, label, disabled) => h('label', {}, h('input', { type: 'radio', name: 'pmode', value: v, checked: mode.v === v, disabled: !!disabled, on: { change: () => { mode.v = v; paint(); } } }), label);
-  const submitB = btn('Dodaj', 'primary', async () => {
+  const submitB = btn('Dodaj', 'primary', single(async () => {
     err.textContent = '';
     const cp = Number(cap.value);
     if (!Number.isInteger(cp) || cp < 1) { err.textContent = 'Limit kont to liczba od 1.'; return; }
@@ -686,7 +704,7 @@ async function addProxyModal(group) {
     }
     close();
     await applyProxies(false);
-  });
+  }));
   const close = modal('Dodaj proxy do grupy ' + group,
     h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Źródło proxy' }, seg('new', 'Nowy plik WireGuard'), seg('old', 'Zdefiniowane wcześniej' + (free.length ? ' (' + free.length + ')' : ''), !free.length)),
     blocked, newBox, oldBox, capField, err,
@@ -804,7 +822,7 @@ async function viewSettings(root) {
   const [rt, upd, sec, cfg] = await Promise.all([
     call('runtime_list').catch(() => []), call('runtime_update_status').catch(() => null), call('secrets_status').catch(() => null), call('config_get').catch(() => null),
   ]);
-  const builds = Array.isArray(rt) ? rt : (rt.builds || []);
+  const builds = (Array.isArray(rt) ? rt : (rt.builds || [])).map((b) => ({ ...b, current: b.current === true || (!Array.isArray(rt) && b.version === rt.current) }));
   const current = builds.find((b) => b.current);
 
   // --- Roblox
@@ -826,7 +844,8 @@ async function viewSettings(root) {
       const r = await act(() => call('runtime_update_now'), 'Sprawdzam…');
       if (!r) return;
       showUpd(r);
-      const t = setInterval(async () => { try { const u = await call('runtime_update_status'); showUpd(u); if (!u.running) { clearInterval(t); route(); } } catch (_) { clearInterval(t); } }, 2500);
+      clearInterval(timer);
+      const t = (timer = setInterval(async () => { try { const u = await call('runtime_update_status'); showUpd(u); if (!u.running) { clearInterval(t); route(); } } catch (_) { clearInterval(t); } }, 2500));
     }), updLine),
     builds.length ? h('div', { class: 'list' }, builds.map((b) => h('div', { class: 'item' },
       h('span', { class: 'grow' }, h('b', {}, b.version), ' ', h('span', { class: 'muted small' }, (b.abi || '') + (b.label ? ' · ' + b.label : ''))),
@@ -908,6 +927,7 @@ async function buildAdvanced(box, c) {
       else if (typeof v === 'number') input = h('input', { type: 'number', value: v, step: 'any' });
       else if (typeof v === 'string') input = h('input', { value: v });
       else input = h('input', { value: JSON.stringify(v) });
+      input.setAttribute('aria-label', key);
       inputs.push({ key, input, orig: v });
       return [h('span', { class: 'muted' }, key, over ? ' •' : ''), h('span', { class: 'row tight' }, input,
         over ? btn('Cofnij', 'sm ghost', async () => { await act(() => call('config_set', { changes: [{ key, value: null }] }), key + ': wartość z pliku'); route(); }) : null)];

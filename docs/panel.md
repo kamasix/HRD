@@ -36,7 +36,7 @@ the page puts the cursor in the field.
 
 "+ Nowa grupa" creates a group (type "Adopt Me" and the name becomes `adopt-me`),
 "+ Dodaj proxy" adds a proxy group to a group, "+ Dodaj konta" adds accounts to a
-proxy group (one name per line; a name that already exists is moved in).
+proxy group (one name per line, or separated by commas; a name that already exists is moved in).
 
 **Ustawienia** has four sections: Roblox (installed versions, automatic updates,
 check now, install from APK files), the secret store, Proxy (every defined proxy,
@@ -50,7 +50,7 @@ gives you ([networking.md](networking.md)). In a group, "+ Dodaj proxy" asks for
 name, the file (or its pasted text), the exit address you expect and the limit of
 accounts. HRD hands the file to the network helper, which keeps its private key in
 a root-only directory, creates a proxy group of the same name in that group and
-applies it. Or pick a proxy defined earlier that no proxy group uses.
+applies it. Or pick a proxy defined earlier that no proxy group uses. A name that is already a proxy is refused, by the page and by the panel itself, because adding over it would replace its key.
 
 **Whether the panel may do this is decided in `netd.toml`, by root.** A proxy decides
 where the traffic of every account behind it goes, and the file carries a private
@@ -145,5 +145,5 @@ defining a proxy. Treat it like the SSH key to the machine. A login page reachab
 from the whole Internet will be found and attacked; use the allow-list and, better,
 a tunnel. The page was exercised in headless Chromium against a real `hrdd` and
 `hrd-panel` (with a stand-in for the network helper, which cannot run in the
-sandbox it was written in) and over TLS with `curl`; it has not been
-security-reviewed by anyone else.
+sandbox it was written in) and over TLS with `curl`. Separate automated review
+passes read it and their findings were fixed; no person has security-reviewed it.

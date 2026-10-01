@@ -95,6 +95,41 @@ await page.waitForSelector('.modal select[aria-label="Tryb"]');
 await shot('group-settings');
 await page.click('.modal button:has-text("Anuluj")');
 
+// A Place field that was touched and put back must not write its old text over what the
+// daemon has now (it used to: Start saved it first). Another change arrives meanwhile.
+const place = card.locator('input.place');
+await place.focus();
+await page.keyboard.type('9');
+await page.keyboard.press('Backspace');
+await page.keyboard.press('Tab'); // leaves with the original text: no change event
+const setPlace = await api('group_set', { name: group, place_id: 777, clear_place_id: false, mode: null, clear_mode: false, note: null });
+check(setPlace.ok === true, 'group_set: ' + JSON.stringify(setPlace.error || ''));
+await page.waitForFunction((g) => [...document.querySelectorAll('.group')].some((el) => el.querySelector('.gname')?.textContent === g && el.querySelector('input.place').value === '777'), group, { timeout: 8000 });
+await card.locator('button:has-text("Start")').first().click();
+await page.waitForTimeout(800);
+const listed = await api('group_list');
+check(listed.ok === true && listed.data.find((x) => x.name === group)?.place_id === 777, 'Start wrote the old Place ID over the daemon\'s');
+
+// Typing in a Place field is not interrupted when the list of groups changes around it.
+await place.focus();
+await page.keyboard.type('55');
+const before = `aa-${sfx}`;
+await api('group_create', { name: before, place_id: null, mode: null, note: null });
+await page.waitForSelector(`.gname:text("${before}")`, { timeout: 8000 });
+check(await place.evaluate((e) => document.activeElement === e && e.value.includes('55')), 'the Place field lost its focus or its text when a group appeared before it');
+await api('group_remove', { name: before, cascade: true });
+await page.waitForFunction((g) => ![...document.querySelectorAll('.gname')].some((e) => e.textContent === g), before, { timeout: 8000 });
+check(await place.evaluate((e) => document.activeElement === e && e.value.includes('55')), 'the Place field lost its focus or its text when a group went away');
+await place.evaluate((e) => e.blur());
+
+// One name per line: spaces do not split a line into several accounts.
+await card.locator('text=+ Dodaj konta').click();
+await page.fill('.modal textarea', 'Main Alt 1');
+await page.click('.modal button.primary');
+await page.waitForSelector('.modal .err:not(:empty)');
+check(/Zła nazwa/.test(await page.locator('.modal .err').innerText()), 'a line with spaces should be refused, not split');
+await page.click('.modal button:has-text("Anuluj")');
+
 // Settings: the sections render; the advanced one loads its diagnostics.
 await page.goto(url + '#/settings');
 await page.waitForSelector('details.sec');
@@ -105,6 +140,10 @@ await page.click('details.sec:has-text("Zaawansowane") >> summary');
 await page.waitForSelector('details.sec:has-text("Zaawansowane") .item');
 await page.waitForTimeout(400);
 await shot('settings');
+let polled = 0;
+page.on('request', (r) => { if (r.url().endsWith('/api/call') && /"cmd":"overview"/.test(r.postData() || '')) polled++; });
+await page.waitForTimeout(6500);
+check(polled === 0, 'the main screen kept polling on the settings page (' + polled + ' requests)');
 
 // Login page for an account.
 await page.goto(url + `#/login/${accA}`);

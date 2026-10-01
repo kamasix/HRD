@@ -129,6 +129,18 @@ impl Backend for Real {
         if parsed.dns.is_empty() && s.dns.is_empty() {
             return Err(Error::invalid("the file has no DNS line and none was given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
         }
+        // The helper and the registry would both take a second file under an existing
+        // name as a replacement and keep only the new key and endpoint. From a form
+        // that is a typo with a cost, so here a name that is taken is refused.
+        let known: Vec<NetworkView> = self
+            .client(Duration::from_secs(60))?
+            .call(Request::NetworkList)?;
+        if known.iter().any(|n| n.network.name == s.name) {
+            return Err(Error::conflict(format!(
+                "a proxy named {} already exists: pick another name (adding over it would replace its key and endpoint)",
+                s.name
+            )));
+        }
         let summary: NetworkSummary = self.netd.call(NetdRequest::PutNetwork {
             name: s.name.clone(),
             config: s.config,

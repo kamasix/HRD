@@ -31,7 +31,7 @@ evidence that a session works.
 | CLI | implemented | `group`, `proxy-group`, `proxy` (also `network`), `tree`, `account assign`, and the commands of before (renames: [install.md](install.md)); `--json`, exit codes, filters. Not run against a real client |
 | Terminal panel | implemented; started in a pty | |
 | Automatic Roblox update (`runtime.auto_update`) | implemented; check/compare logic and the daemon thread compile and are exercised up to the network call | **unverified**: a real update cycle (the sandbox cannot reach the mirror); a new Roblox build can need stubs upstream has not got yet - then `runtime use` the older one |
-| Web panel (groups, proxy groups, accounts) | implemented; the page was driven in headless Chromium against a real `hrdd` and `hrd-panel` with a **stand-in** for `hrd-netd`: creating groups, proxy groups and accounts, adding a proxy from a WireGuard file, reusing a freed proxy, moving, taking out and removing, settings, the helper refusing, phone width, light and dark | the stand-in is not the helper: a real WireGuard handshake behind "proxy gotowe" was never seen. Rows of connected, failed and queued accounts were drawn from data faked in the browser, because no client could run. Not reviewed by a third party |
+| Web panel (groups, proxy groups, accounts) | implemented; the page was driven in headless Chromium against a real `hrdd` and `hrd-panel` with a **stand-in** for `hrd-netd`: creating groups, proxy groups and accounts, adding a proxy from a WireGuard file, reusing a freed proxy, moving, taking out and removing, settings, the helper refusing, phone width, light and dark | the stand-in is not the helper: a real WireGuard handshake behind "proxy gotowe" was never seen. Rows of connected, failed and queued accounts were drawn from data faked in the browser, because no client could run. Read by separate automated review passes, whose findings were fixed; not reviewed by a person |
 | Defining a proxy from the panel | implemented behind `allow_service_define` in `netd.toml` (off by default) | the permission rule is a unit-tested function, and `scripts/netd-socket-check.sh` ran the real `hrd-netd` binary (stand-in `ip`, `wg`, `nft`) with a client as the service user: it connects, defining is refused, and root gets past the rule. The panel's whole add-a-proxy path was run against the stand-in only. (That check found, and the fix removed, a socket left `0600 root`, which no service user could have reached.) |
 | Upstream patches | implemented; compile-checked, built, asset patch tested | **unverified** in a running client |
 | Resource modes | implemented as environment lists, tested | effect on memory **unmeasured** |
@@ -61,5 +61,13 @@ fixed where stated in the commit log. These were **understood and not fixed**:
   finished writing its session by then is unverified.
 * `hrd-enter` does not check the caller against the group assignment (see
   security.md).
+* The panel's main screen asks for the whole hierarchy in one reply (`overview`,
+  about 580 bytes per account): it stops fitting in the 1 MiB protocol line at roughly
+  1800 accounts, where the page would show only the daemon's error. The design target
+  is 300.
+* Replacing `cordial-hrd` with `hrd` leaves the old package removed but not purged,
+  and purging it would run a script that deletes the directories `hrd` uses. The
+  installer says so; it does not rewrite the old package's script (that would mean
+  editing another package's files in dpkg's database). [install.md](install.md).
 * Everything that depends on the real engine's log lines, WireGuard, systemd and
   a Debian 13 install is unverified at runtime.
