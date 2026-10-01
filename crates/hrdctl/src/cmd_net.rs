@@ -361,7 +361,7 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
                                 .map(|g| g.to_string())
                                 .collect::<Vec<_>>()
                                 .join(","),
-                            format!("{:?}", n.readiness).to_lowercase(),
+                            n.readiness.as_str().to_string(),
                             n.network.endpoint.clone(),
                             opt(&n.network.exit.configured),
                             n.network

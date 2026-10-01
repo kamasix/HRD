@@ -275,7 +275,7 @@ pub fn proxy_group(ctx: &Ctx, c: ProxyGroupCmd) -> Result<()> {
                             format!("{}/{}", g.assigned, g.capacity),
                             g.live.to_string(),
                             g.network_ready
-                                .map(|r| format!("{r:?}").to_lowercase())
+                                .map(|r| r.as_str().to_string())
                                 .unwrap_or_else(|| "no proxy".into()),
                             g.note.clone().unwrap_or_default(),
                         ]
@@ -414,7 +414,7 @@ pub fn tree(ctx: &Ctx) -> Result<()> {
                 pv.name,
                 opt(&pv.network),
                 pv.network_ready
-                    .map(|r| format!("{r:?}").to_lowercase())
+                    .map(|r| r.as_str().to_string())
                     .unwrap_or_else(|| "no proxy".into()),
                 pv.assigned,
                 pv.capacity

@@ -372,6 +372,19 @@ pub enum Readiness {
     Unknown,
 }
 
+impl Readiness {
+    /// The word used in JSON and on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Readiness::NotApplied => "not_applied",
+            Readiness::Ready => "ready",
+            Readiness::Unverified => "unverified",
+            Readiness::Broken => "broken",
+            Readiness::Unknown => "unknown",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The registry file
 // ---------------------------------------------------------------------------
@@ -669,6 +682,22 @@ impl InstanceRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_words_match_the_json() {
+        for r in [
+            Readiness::NotApplied,
+            Readiness::Ready,
+            Readiness::Unverified,
+            Readiness::Broken,
+            Readiness::Unknown,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&r).unwrap(),
+                format!("\"{}\"", r.as_str())
+            );
+        }
+    }
 
     #[test]
     fn state_names_round_trip() {
