@@ -35,19 +35,26 @@ never in the repository, packages or CI artifacts.
 * `hrd-netd`: root with three capabilities (one of them `CAP_SYS_ADMIN`,
   which is close to root: treat a compromise of this process as a compromise of
   the host) and `no_new_privs`. It takes no commands and no paths. It does take
-  a **WireGuard configuration** (its endpoint and keys) - but only from root:
-  `PutNetwork` is refused for every other caller, so neither the manager nor the
-  panel can change where a group's traffic goes (`sudo hrdctl network add`).
-  Planning, applying and removing groups is open to the service user, and works
-  only on networks root defined. Its socket is in the root-owned
+  a **WireGuard configuration** (its endpoint and keys) - but only from root unless
+  you change that: `PutNetwork` is refused for every other caller, so neither the
+  manager nor the panel can change where a proxy group's traffic goes
+  (`sudo hrdctl proxy add`). **`allow_service_define = true` in the root-owned
+  `/etc/cordial-hrd/netd.toml` hands that decision to the service user**, and so to
+  the panel: anyone who can sign in to it (and any process of the service user,
+  including a compromised client) can then define a proxy, which routes every
+  account behind it through an endpoint they chose and gives them that tunnel's
+  traffic. It is off by default; turn it on only for a panel you would trust with
+  the SSH key to the machine. Planning, applying and removing proxy groups is open
+  to the service user either way, and works only on proxies that were defined. Its
+  socket is in the root-owned
   `/run/cordial-hrd-netns/` (created `0600` and opened through the descriptor),
   and every client of it checks that the peer is root before sending anything.
   It locates `ip`, `wg`, `nft` in system directories, requires them root-owned,
   and runs them without a shell, with a cleared environment. Private keys are
   stored root-only; **the service user cannot read them**, but it can cause them
-  to be used (apply a group).
+  to be used (apply a proxy group).
 * `hrd-enter`: one file capability, `cap_sys_admin`, executable by root and
-  the service group only. It takes a group *name*, validates it as a slug, opens
+  the service group only. It takes a proxy group *name*, validates it as a slug, opens
   only a file under `/run/cordial-hrd-netns` (a constant: an option that chose the
   directory would let the caller choose the namespace) that must be an `nsfs` file
   owned by root in a root-owned directory not writable by others, and follows no
@@ -56,12 +63,13 @@ never in the repository, packages or CI artifacts.
   them back; only then does it `exec`. Tested as root and as an unprivileged user,
   including that it refuses a caller that has `no_new_privs` set (the capability is
   then not granted). **Limits:** any process of the service user - including a
-  compromised client started *without* a group, or any client that can exec it
-  directly - can run `hrd-enter` for *any* group, because the wrapper does not
-  check the caller against the group's assignment. Clients started through it have
-  `no_new_privs` and cannot re-enter a different namespace, but the boundary
-  between groups is not enforced against a hostile same-user process. Do not use
-  groups as a security boundary between accounts you do not trust equally.
+  compromised client started *without* a proxy group, or any client that can exec
+  it directly - can run `hrd-enter` for *any* proxy group, because the wrapper does
+  not check the caller against the proxy group's assignment. Clients started
+  through it have `no_new_privs` and cannot re-enter a different namespace, but the
+  boundary between proxy groups is not enforced against a hostile same-user
+  process. Do not use proxy groups as a security boundary between accounts you do
+  not trust equally.
   The unit does **not** set `NoNewPrivileges` for this reason and instead bounds
   the capability set to `CAP_SYS_ADMIN`.
 * Settings that widen access (`service.*`, `control.*`, `secrets.*`, the program
@@ -80,8 +88,8 @@ APKs (signature verified against the certificate pinned in upstream Cordial **an
 checked to contain the key that signed**, which upstream does not check - BASELINE
 item 8, with a test that reproduces the gap; staged private copies, content
 classification, path traversal and symlink refusal, atomic publication, sealed
-read-only store), WireGuard files (whitelist parser; commands refused), account
-and group names (validated types at deserialisation), engine log lines
+read-only store), WireGuard files (whitelist parser; commands refused), account,
+group, proxy group and proxy names (validated types at deserialisation), engine log lines
 (substring-matched, length-capped, never executed), paths (derived, never taken
 from requests), join links and private-server codes (charset-checked).
 

@@ -15,7 +15,7 @@ A value that could not be read is shown as `-` or `not measured`, never as 0.
 | uptime | since the run started | |
 | memory pressure | `/proc/pressure/memory` "some" 10-second average | |
 | disk | allocated bytes of the accounts' tree plus the runtime store, hard links counted once | a walk capped at 500,000 entries, says so when it stops early |
-| group traffic | rx/tx bytes of each group's `wg0`, from the helper | |
+| proxy group traffic | rx/tx bytes of each proxy group's `wg0`, from the helper | |
 | KSM | `/sys/kernel/mm/ksm/*` when KSM is on | |
 
 Classes: **engine** = `cordial-run`; **compositor** = `cage`; **manager** =

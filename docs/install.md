@@ -113,20 +113,40 @@ itself will make. Nothing is published unless all of it passes. `runtime use
 VERSION` selects another installed build (running clients keep theirs). The APK is
 read once, installed once, and used by every client as unchanging files.
 
-## 4. Accounts, network, go
+## 4. Groups, proxies, accounts, go
+
+A **group** is a game (its Place ID), it holds **proxy groups**, and each proxy
+group is one **proxy** (a WireGuard tunnel) with the **accounts** behind it:
 
 ```
-hrdctl account add alt-01 ; hrdctl account login alt-01
-sudo hrdctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
-hrdctl group create g01 --network de-1 --capacity 20
-hrdctl group assign g01 --accounts g01.txt
-hrdctl network plan && hrdctl network apply
-hrdctl group start g01 --place-id 1234567890
-hrdctl status ; hrdctl stats ; hrdctl tui
+hrdctl group create adopt-me --place-id 1234567890
+sudo hrdctl proxy add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
+hrdctl proxy-group create de-1 --group adopt-me --proxy de-1 --capacity 20
+hrdctl proxy-group assign de-1 --accounts alt.txt --create-missing    # one name per line
+hrdctl proxy plan && hrdctl proxy apply
+hrdctl account login alt-01                      # you type the password, per account
+hrdctl group start adopt-me
+hrdctl tree ; hrdctl status ; hrdctl stats ; hrdctl tui
 ```
+
+All of it can be done in the web panel instead ([panel.md](panel.md)); defining the
+proxy from the panel needs `allow_service_define = true` in
+`/etc/cordial-hrd/netd.toml`, otherwise `sudo hrdctl proxy add` as above.
 
 Place ids, account names and addresses are yours; none is built in. See
 [operations.md](operations.md) for running it day to day.
+
+### Upgrading from the single-level groups
+
+A registry written before groups were split (a group was a network with its
+accounts, and the place was typed at every start) is upgraded the first time the new
+daemon starts: each old group becomes a group of the same name with one proxy group
+of the same name, in which its accounts and its network stay. No place is set, so
+type one into each group (panel, or `hrdctl group set NAME --place-id N`) before
+starting it. The old file is kept as `/var/lib/cordial-hrd/registry.json.schema1`;
+keep it if you may go back to the older daemon, which cannot read the new one.
+Merge groups afterwards by moving proxy groups (`hrdctl proxy-group set NAME --group
+OTHER`, or the proxy group's settings in the panel).
 
 ## Updating
 

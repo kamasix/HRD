@@ -10,14 +10,24 @@ ready), 6 authentication required, 7 permission denied.
 ```
 hrdctl secrets status                # ready? after a reboot: secrets unlock
 hrdctl doctor                        # anything FAIL?
-hrdctl group start g01 --place-id 1234567890
+hrdctl tree                          # groups, their proxy groups, the accounts in them
+hrdctl group start adopt-me          # every account of the group, at the group's Place ID
+hrdctl proxy-group start de-1        # or the accounts of one proxy group
+hrdctl instance start alt-07         # or one account
 hrdctl status --live                 # queued -> starting -> joining -> connected
 hrdctl stats
 hrdctl instance stop alt-07          # polite stop, then the whole process set is ended
+hrdctl group stop adopt-me           # everything running in the group (also proxy-group stop)
 hrdctl stop-all
 ```
 
-`group start` only **queues**. The scheduler admits one start when: fewer than
+The place comes from the group (`hrdctl group set adopt-me --place-id N`); a
+`--place-id` on a start overrides it for that start. A group without a place
+refuses to start and says so; a running client keeps the place it joined when the
+group's place is changed. The resource mode is the request's, else the account's,
+else the group's, else `resources.default_mode`.
+
+A start only **queues**. The scheduler admits one start when: fewer than
 `max_concurrent_starts` are in flight (0 = chosen from the machine), the minimum
 interval has passed, free memory minus what the starts in flight are still
 expected to add stays above `min_available_mem_mib`, and memory and CPU pressure
@@ -29,7 +39,7 @@ not restore a queue; it is an instruction to a daemon that is gone.
 
 | state | meaning | you |
 |---|---|---|
-| `configured` | registered, never started | `instance start` |
+| `configured` | registered, never started | `instance start` (or start its group) |
 | `auth_required` | no usable session, or a client reached the sign-in screen; the reason says which | `account login` |
 | `queued` | waiting for a start slot | wait, or `queue cancel` |
 | `starting` | process set exists, engine not yet at its first screen | wait; after `start_timeout_s` it becomes `failed` |
@@ -54,7 +64,7 @@ unobserved exit status. The keyring keeps running across a daemon restart.
 ## Sizing
 
 Start small and look: `hrdctl stats` (PSS and pressure), then raise
-`scheduler.max_instances` and start more groups. 300 is the manager's ceiling,
+`scheduler.max_instances` and start more proxy groups. 300 is the manager's ceiling,
 not a prediction for the machine ([memory.md](memory.md), [gpu-less.md](gpu-less.md)).
 Stop before the machine swaps or the OOM killer chooses for you: clients have
 `oom_score_adj = 300`, the daemon -500, so a squeeze kills a client first.
@@ -75,8 +85,8 @@ standard output with a non-zero exit status.
 |---|---|
 | `cannot connect to control.sock` | `systemctl status hrdd`; are you in the `cordial` group? |
 | start refused: secret store | `hrdctl secrets status`, then `secrets unlock` |
-| start refused: network not usable | `network list` (state and reason), `network plan`, `network apply` |
+| start refused: proxy not usable | `proxy list` (state and reason), `proxy plan`, `proxy apply` |
 | `failed` right after start | `instance show ID`, `logs ID`; `doctor` for a missing `cage` / Vulkan / client binary |
 | many `failed` at once under load | `stats`: memory pressure; raise `min_available_mem_mib`, lower `max_instances` |
-| a group's clients all `disconnected` | `network list`: handshake age; `network check`; the gateway (docs/gateway.md) |
+| a proxy group's clients all `disconnected` | `proxy list`: handshake age; `proxy check`; the gateway (docs/gateway.md) |
 | `doctor` says processes are tracked by process group | the service is not running with `Delegate=yes`, or cgroup v2 is missing |

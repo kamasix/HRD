@@ -1,22 +1,73 @@
 # The web panel (optional)
 
-Two pages. **Konta** (accounts): one card per account with its state, memory and CPU
-and one main button (Start, Stop or Zaloguj depending on the state), a Place ID
-field that is remembered in your browser, and "Zatrzymaj wszystko". **Ustawienia**
-(settings): Roblox (installed versions, automatic updates, check now, install from
-APK files), the secret store, groups and networks, and an advanced section with
-the doctor and every daemon setting. The page is in Polish. Everything it does is
-also a `hrdctl` command (see operations.md).
+Two pages. The page is in Polish; everything it does is also an `hrdctl` command
+(see [operations.md](operations.md)).
 
-The panel lets you do from a browser what `hrdctl` does: fleet status and
-statistics, accounts and the sign-in screen, groups, networks (listing, applying; defining a WireGuard
-network needs root and is done with `sudo hrdctl network add`), the Roblox runtime (including uploading an APK),
-settings, the secret store, and the doctor. It is **off until you set it up**, is
-a separate program (`hrd-panel`) and a separate service, and has no authority
-beyond what the control socket gives any member of the service group: it is a
-client of that socket, as the same unprivileged user. It cannot define a WireGuard
-network (that needs root: `sudo hrdctl network add`), cannot change the
-protected settings (see security.md) and needs the file-based token to log in.
+**Grupy** is the main screen and is the hierarchy HRD keeps:
+
+```
+adopt-me   Place [ 920587237 ]                       12/25 połączonych   Start Stop ⋯
+  de-1   ● proxy gotowe  203.0.113.11   12/20 połączonych · limit 20     Start Stop ⋯
+     alt-01   ● połączony   10 min · 280 MB · 3%                          Stop ⋯
+     alt-02   ● zatrzymany                                               Start ⋯
+     + Dodaj konta
+  nl-1   ● proxy gotowe  ...
+  + Dodaj proxy
+```
+
+* a **group** is one game: its name and its **Place ID**, typed in its header (saved
+  when you leave the field or press Enter), and Start and Stop for everything in it.
+  Its menu (⋯) holds the resource mode and a note, and removal;
+* inside it, one **proxy group** per proxy: whether the proxy is ready, unverified,
+  not applied or broken, the exit address, how many of its accounts are connected
+  and its limit, and Start and Stop for that proxy group. Its menu: settings (limit,
+  move to another group, expected exit address, STUN server), check the exit, apply,
+  remove. A proxy group with many accounts starts collapsed; the page remembers
+  what you opened;
+* inside that, the **accounts**: state, how long it has run, memory and CPU, one main
+  button (Start, Stop or Zaloguj) and a menu: details, log, sign in again, sign out,
+  move to another proxy group, take out of its group, remove;
+* **Bez grupy** lists accounts that are in no proxy group, each with an assign button.
+
+A start without anything else joins the place of the account's group. Start on a
+group queues every account in all its proxy groups; the scheduler paces them
+([operations.md](operations.md)). A group with no Place ID yet cannot be started:
+the page puts the cursor in the field.
+
+"+ Nowa grupa" creates a group (type "Adopt Me" and the name becomes `adopt-me`),
+"+ Dodaj proxy" adds a proxy group to a group, "+ Dodaj konta" adds accounts to a
+proxy group (one name per line; a name that already exists is moved in).
+
+**Ustawienia** has four sections: Roblox (installed versions, automatic updates,
+check now, install from APK files), the secret store, Proxy (every defined proxy,
+which proxy group uses it, plan and apply the network changes) and an advanced one
+with the doctor and every daemon setting.
+
+## Adding a proxy
+
+A **proxy** is a WireGuard tunnel: the `.conf` file your VPN or gateway provider
+gives you ([networking.md](networking.md)). In a group, "+ Dodaj proxy" asks for the
+name, the file (or its pasted text), the exit address you expect and the limit of
+accounts. HRD hands the file to the network helper, which keeps its private key in
+a root-only directory, creates a proxy group of the same name in that group and
+applies it. Or pick a proxy defined earlier that no proxy group uses.
+
+**Whether the panel may do this is decided in `netd.toml`, by root.** A proxy decides
+where the traffic of every account behind it goes, and the file carries a private
+key, so the helper accepts a new proxy only from root unless you set
+
+```
+allow_service_define = true     # /etc/cordial-hrd/netd.toml, then: sudo systemctl restart hrd-netd
+```
+
+Left off (the default) the panel says so, instead of showing a form that cannot work,
+and names the terminal command: `sudo hrdctl proxy add NAME --wireguard-config
+FILE.conf`. A proxy added that way appears under "Zdefiniowane wcześniej". With the
+setting on, anyone who can sign in to the panel can define proxies: see
+[security.md](security.md).
+
+HTTP and SOCKS proxies are not supported. The game talks UDP and a TCP-only proxy
+cannot carry it ([networking.md](networking.md)).
 
 ## Set it up
 
@@ -44,6 +95,14 @@ sudo systemctl enable --now hrd-panel
 Open the URL. The certificate is self-signed, so the browser warns; compare its
 fingerprint with the one `init` printed before accepting. Enter the token.
 
+It is **off until you set it up**, is a separate program (`hrd-panel`) and a
+separate service, and has no authority beyond what the control socket gives any
+member of the service group: it is a client of that socket, as the same
+unprivileged user. It cannot change the protected settings (see security.md) and
+needs the file-based token to log in. The one thing it asks the network helper
+for that `hrdctl` does as root is defining a proxy, and only when
+`allow_service_define` is on.
+
 ## Reaching it by typing the VPS address
 
 The home server cannot take inbound connections, so a browser at
@@ -69,7 +128,10 @@ is applied for you.
 * The daemon's own controls are all available except the ones that cannot be
   done safely from a page: stopping the daemon, streams, and sending files
   through the JSON route (uploads have their own route, limited to 4 files of
-  1 GiB, stored in a private directory and deleted after the import).
+  1 GiB, stored in a private directory and deleted after the import). A
+  WireGuard file typed or chosen in the page is sent once over HTTPS to the
+  panel, handed to the helper and not kept: the panel writes it nowhere and the
+  page clears it.
 * Logs contain the method, path and status, never a body, a query or a cookie.
   Passwords typed into the sign-in screen and passphrases are sent once and are
   not kept.
@@ -78,9 +140,10 @@ is applied for you.
 ## What to be careful about
 
 Whoever has the token can do everything the manager can, including starting
-clients, importing a network and typing into a sign-in client. Treat it like the
-SSH key to the machine. A login page reachable from the whole Internet will be
-found and attacked; use the allow-list and, better, a tunnel. The panel has been
-exercised over real TLS with `curl` against a scratch daemon (login, lockout, CSRF,
-headers, forwarding) and its page was loaded in a headless browser; it has not
-been security-reviewed by anyone else.
+clients and typing into a sign-in client, and, with `allow_service_define` on,
+defining a proxy. Treat it like the SSH key to the machine. A login page reachable
+from the whole Internet will be found and attacked; use the allow-list and, better,
+a tunnel. The page was exercised in headless Chromium against a real `hrdd` and
+`hrd-panel` (with a stand-in for the network helper, which cannot run in the
+sandbox it was written in) and over TLS with `curl`; it has not been
+security-reviewed by anyone else.

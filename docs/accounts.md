@@ -2,18 +2,28 @@
 
 An **account** here is a profile for one of your own Roblox accounts: a name
 (`[a-z0-9-]`, up to 32 characters, because a socket path inside the profile has
-to fit 107 bytes), labels, a note, an optional group, an optional resource mode.
-Nothing is created at Roblox. There is no account generation.
+to fit 107 bytes), labels, a note, an optional proxy group, an optional resource
+mode. Nothing is created at Roblox. There is no account generation.
+
+An account belongs to at most one **proxy group**, which decides the proxy it
+leaves through and, through the group the proxy group is in, the Place ID it
+joins ([architecture.md](architecture.md)).
 
 ```
-hrdctl account add alt-01 --label batch1 --group g01
+hrdctl account add alt-01 --label batch1 --proxy-group de-1
+hrdctl account assign de-1 alt-02 alt-03     # put accounts into a proxy group (moves them)
+hrdctl account unassign alt-03               # take it out; it stays registered
 hrdctl account login alt-01          # you type the password
 hrdctl account list
 hrdctl account logout alt-01         # erase the stored session
 hrdctl account remove alt-01         # asks you to type the name
-hrdctl account export --file accounts.json     # names, labels, groups: no secrets
+hrdctl account export --file accounts.json     # names, labels, proxy groups: no secrets
 hrdctl account import accounts.json
 ```
+
+An account that is running or queued cannot be moved or taken out of its proxy
+group: stop it first. In the panel the same is done from an account's menu, and
+"+ Dodaj konta" in a proxy group adds accounts to it.
 
 ## Where a session lives
 
@@ -66,9 +76,10 @@ Sign-in is upstream's own Lua screen inside the client; Cordial has no function
 that drives it. Passwords, codes, and any puzzle or confirmation are yours to
 provide. `hrdctl account login NAME`:
 
-1. queues a special **sign-in client** for the account through the account's
-   group network (a login from another address than the client will play from is
-   avoided), at full resolution;
+1. queues a special **sign-in client** for the account through its proxy group's
+   proxy (a login from another address than the client will play from is
+   avoided), at full resolution. An account in no proxy group has no proxy, so it
+   cannot sign in unless `network.allow_unrouted` is on: assign it first;
 2. when it reaches its first screen, opens the **console**: the client's current
    frame drawn in the terminal (half-block characters with rulers in frame pixels)
    and a prompt. You type `click X Y`, `type TEXT`, `password` (read without echo,

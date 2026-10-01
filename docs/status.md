@@ -21,16 +21,18 @@ evidence that a session works.
 | Process ownership by cgroup v2, pgid fallback | implemented; cgroup path exercised in the sandbox | `memory`/`cpu`/`pids` limits need delegated controllers (unverified here) |
 | Secrets: private bus + headless keyring | implemented; create/lock/unlock/wrong-passphrase exercised in the sandbox | plaintext fallback refused; same-user limits stated in [security.md](security.md) |
 | Sign-in console | implemented, unit-tested with a fake control surface | **unverified**: completing a real sign-in this way |
-| Network groups: namespace + fail-closed firewall + DNS overlay | implemented; exercised on real namespaces with a veth stand-in | |
+| Groups, proxy groups, accounts (the three-level model) | implemented, unit-tested | the registry operations, place and mode resolution, group and proxy-group start/stop, and the upgrade of a schema 1 registry (synthetic registries, and through the daemon's loader). The upgrade has **not** been run on a real installation's registry |
+| Proxy groups: namespace + fail-closed firewall + DNS overlay | implemented; exercised on real namespaces with a veth stand-in before the group split | after the split the helper's type for a namespace key was renamed (`ProxyGroupName`; wire format and manifest unchanged). It compiles and its unit tests pass; the ignored root test needs `ip`, `wg` and `nft`, which the sandbox of this change lacked, so it was **not re-run** |
 | WireGuard device creation, handshake | compiled; **unverified** | sandbox kernel has no WireGuard |
 | `hrd-enter` | implemented; run as root and unprivileged | |
 | Observed exit (STUN from inside the namespace) | implemented, parsing unit-tested | **unverified** on a real tunnel |
 | Gateway plan (files only) | implemented, unit-tested | never applied anywhere |
 | Stats (RSS/PSS/USS/swap/CPU/cgroup/disk/traffic) | implemented; parsing tested; sampled in the sandbox | values for a real client unknown |
-| CLI | implemented | all requested commands; `--json`, exit codes, filters |
+| CLI | implemented | `group`, `proxy-group`, `proxy` (also `network`), `tree`, `account assign`, and every command of before; `--json`, exit codes, filters. Not run against a real client |
 | Terminal panel | implemented; started in a pty | |
 | Automatic Roblox update (`runtime.auto_update`) | implemented; check/compare logic and the daemon thread compile and are exercised up to the network call | **unverified**: a real update cycle (the sandbox cannot reach the mirror); a new Roblox build can need stubs upstream has not got yet - then `runtime use` the older one |
-| Web panel | implemented; exercised over TLS with curl and in headless Chromium | not reviewed by a third party |
+| Web panel (groups, proxy groups, accounts) | implemented; the page was driven in headless Chromium against a real `hrdd` and `hrd-panel` with a **stand-in** for `hrd-netd`: creating groups, proxy groups and accounts, adding a proxy from a WireGuard file, reusing a freed proxy, moving, taking out and removing, settings, the helper refusing, phone width, light and dark | the stand-in is not the helper: a real WireGuard handshake behind "proxy gotowe" was never seen. Rows of connected, failed and queued accounts were drawn from data faked in the browser, because no client could run. Not reviewed by a third party |
+| Defining a proxy from the panel | implemented behind `allow_service_define` in `netd.toml` (off by default) | the permission rule is a unit-tested function; the whole path was run against the stand-in only |
 | Upstream patches | implemented; compile-checked, built, asset patch tested | **unverified** in a running client |
 | Resource modes | implemented as environment lists, tested | effect on memory **unmeasured** |
 | Headless (`cage`), software drawing | configured | **unverified** on a machine without a GPU; `cordial-run` always links GTK |
