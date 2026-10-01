@@ -1,4 +1,4 @@
-//! Operations on accounts, groups, networks and configuration.
+//! Operations on accounts, groups, proxy groups, networks (proxies) and configuration.
 
 use std::net::IpAddr;
 
@@ -66,7 +66,7 @@ fn assigned(inner: &Inner, pg: &ProxyGroupName) -> usize {
 /// Change the registry and write it. If the change is refused or the write
 /// fails, the registry is put back as it was, so that memory and disk never
 /// disagree about what exists.
-fn commit<T>(
+pub(crate) fn commit<T>(
     d: &Daemon,
     inner: &mut Inner,
     change: impl FnOnce(&mut Registry) -> Result<T>,
@@ -187,29 +187,39 @@ pub fn account_set(
     labels: Option<Vec<String>>,
     note: Option<String>,
     mode: Option<ResourceMode>,
+    clear_mode: bool,
 ) -> Result<Value> {
     if let Some(l) = &labels {
         labels_ok(l)?;
     }
     note_ok(&note)?;
+    if mode.is_some() && clear_mode {
+        return Err(Error::invalid("give a mode or ask to clear it, not both"));
+    }
     let mut inner = d.lock();
-    let a = inner
-        .reg
-        .accounts
-        .get_mut(&name)
-        .ok_or_else(|| Error::not_found(format!("no account {name}")))?;
-    if let Some(l) = labels {
-        a.labels = l;
+    commit(d, &mut inner, |reg| {
+        let a = reg
+            .accounts
+            .get_mut(&name)
+            .ok_or_else(|| Error::not_found(format!("no account {name}")))?;
+        if let Some(l) = &labels {
+            a.labels = l.clone();
+        }
+        if note.is_some() {
+            a.note = note.clone().filter(|n| !n.is_empty());
+        }
+        if mode.is_some() {
+            a.mode = mode;
+        } else if clear_mode {
+            a.mode = None;
+        }
+        Ok(())
+    })?;
+    let a = inner.reg.accounts.get(&name).cloned();
+    match a {
+        Some(a) => to(&views::account(&inner, &a)),
+        None => internal("the account"),
     }
-    if note.is_some() {
-        a.note = note.filter(|n| !n.is_empty());
-    }
-    if mode.is_some() {
-        a.mode = mode;
-    }
-    let a = a.clone();
-    d.save_registry(&inner)?;
-    to(&views::account(&inner, &a))
 }
 
 pub fn account_remove(d: &Daemon, name: AccountName, confirm: String) -> Result<Value> {
@@ -239,9 +249,11 @@ pub fn account_remove(d: &Daemon, name: AccountName, confirm: String) -> Result<
             "{name} was started while it was being removed"
         )));
     }
-    inner.reg.accounts.remove(&name);
+    commit(d, &mut inner, |reg| {
+        reg.accounts.remove(&name);
+        Ok(())
+    })?;
     inner.live.remove(&name);
-    d.save_registry(&inner)?;
     let _ = std::fs::remove_file(d.layout.instance_record(&name));
     fsutil::remove_dir_all_if_exists(&d.layout.account_home(&name))?;
     let log = d.layout.instance_log(&name);
@@ -326,7 +338,7 @@ pub fn account_import(d: &Daemon, list: Vec<ExportedAccount>, replace: bool) -> 
                 skipped.push(e.name.to_string());
                 continue;
             }
-            account_set(d, e.name.clone(), Some(e.labels), e.note, e.mode)?;
+            account_set(d, e.name.clone(), Some(e.labels), e.note, e.mode, false)?;
             updated += 1;
         } else {
             // A proxy group that does not exist here is dropped, not created.
@@ -335,7 +347,7 @@ pub fn account_import(d: &Daemon, list: Vec<ExportedAccount>, replace: bool) -> 
                 .filter(|g| d.lock().reg.proxy_groups.contains_key(g));
             account_add(d, e.name.clone(), e.labels, e.note, proxy_group)?;
             if e.mode.is_some() {
-                account_set(d, e.name.clone(), None, None, e.mode)?;
+                account_set(d, e.name.clone(), None, None, e.mode, false)?;
             }
             added += 1;
         }
@@ -507,6 +519,7 @@ pub fn proxy_group_create(
     note_ok(&note)?;
     check_capacity(capacity)?;
     let mut inner = d.lock();
+    let removing = inner.removing_networks.clone();
     commit(d, &mut inner, |reg| {
         if !reg.groups.contains_key(&group) {
             return Err(Error::not_found(format!("no group {group}")));
@@ -518,7 +531,7 @@ pub fn proxy_group_create(
                 reg.proxy_groups[&name].group
             )));
         }
-        check_network_free(reg, &network, None)?;
+        check_network_free(reg, &removing, &network, None)?;
         reg.proxy_groups.insert(
             name.clone(),
             ProxyGroup {
@@ -540,6 +553,7 @@ pub fn proxy_group_create(
 
 fn check_network_free(
     reg: &Registry,
+    removing: &std::collections::BTreeSet<NetworkName>,
     network: &Option<NetworkName>,
     except: Option<&ProxyGroupName>,
 ) -> Result<()> {
@@ -548,6 +562,9 @@ fn check_network_free(
         return Err(Error::not_found(format!(
             "no proxy {n}; define it with `hrdctl proxy add` (or in the panel)"
         )));
+    }
+    if removing.contains(n) {
+        return Err(Error::conflict(format!("proxy {n} is being removed")));
     }
     if let Some(other) = reg
         .proxy_groups
@@ -564,6 +581,11 @@ fn check_network_free(
 
 pub fn proxy_group_list(d: &Daemon, group: Option<GroupName>) -> Result<Value> {
     let inner = d.lock();
+    if let Some(g) = &group {
+        if !inner.reg.groups.contains_key(g) {
+            return Err(Error::not_found(format!("no group {g}")));
+        }
+    }
     let cfg = d.cfg();
     let v: Vec<ProxyGroupView> = inner
         .reg
@@ -607,6 +629,7 @@ pub fn proxy_group_set(
     if (network.is_some() || clear_network) && live {
         return Err(Error::conflict("the proxy group has running or queued instances; changing its proxy would move them to another exit"));
     }
+    let removing = inner.removing_networks.clone();
     commit(d, &mut inner, |reg| {
         if let Some(g) = &group {
             if !reg.groups.contains_key(g) {
@@ -614,7 +637,7 @@ pub fn proxy_group_set(
             }
         }
         if network.is_some() {
-            check_network_free(reg, &network, Some(&name))?;
+            check_network_free(reg, &removing, &network, Some(&name))?;
         }
         let p = reg
             .proxy_groups
@@ -723,8 +746,13 @@ pub fn account_assign(
         }
     }
     if !missing.is_empty() {
+        let how = if proxy_group.is_some() {
+            " (add them with `hrdctl account add`, or `hrdctl proxy-group assign --create-missing`)"
+        } else {
+            ""
+        };
         return Err(Error::not_found(format!(
-            "unknown accounts: {} (use --create-missing to add them)",
+            "unknown accounts: {}{how}",
             missing.join(", ")
         )));
     }
@@ -734,10 +762,18 @@ pub fn account_assign(
         .filter(|a| !inner.reg.accounts.contains_key(*a))
         .cloned()
         .collect();
+    let forget_new_dirs = |created: &[AccountName]| {
+        for a in created {
+            let _ = fsutil::remove_dir_all_if_exists(&d.layout.account_home(a));
+        }
+    };
     for a in &created {
-        make_account_dirs(d, a)?;
+        if let Err(e) = make_account_dirs(d, a) {
+            forget_new_dirs(&created);
+            return Err(e);
+        }
     }
-    let (moved, unchanged) = commit(d, &mut inner, |reg| {
+    let (moved, unchanged) = match commit(d, &mut inner, |reg| {
         let (mut moved, mut unchanged) = (0, 0);
         for a in &uniq {
             let acc = reg
@@ -752,7 +788,14 @@ pub fn account_assign(
             }
         }
         Ok((moved, unchanged))
-    })?;
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            // The accounts were not created, so neither are their directories.
+            forget_new_dirs(&created);
+            return Err(e);
+        }
+    };
     for a in &created {
         bring_up_account(d, &mut inner, a, now);
     }
@@ -790,8 +833,10 @@ pub fn network_register(d: &Daemon, n: Network) -> Result<Value> {
         n.created_at = now_unix();
     }
     let name = n.name.clone();
-    inner.reg.networks.insert(name.clone(), n);
-    d.save_registry(&inner)?;
+    commit(d, &mut inner, |reg| {
+        reg.networks.insert(name.clone(), n);
+        Ok(())
+    })?;
     let cfg = d.cfg();
     let n = inner
         .reg
@@ -816,7 +861,7 @@ pub fn network_list(d: &Daemon) -> Result<Value> {
 
 pub fn network_remove(d: &Daemon, name: NetworkName) -> Result<Value> {
     {
-        let inner = d.lock();
+        let mut inner = d.lock();
         if !inner.reg.networks.contains_key(&name) {
             return Err(Error::not_found(format!("no proxy {name}")));
         }
@@ -831,7 +876,15 @@ pub fn network_remove(d: &Daemon, name: NetworkName) -> Result<Value> {
                 g.name
             )));
         }
+        // The lock is let go of while the helper is asked to forget the key; until
+        // this is done, no proxy group may take the proxy.
+        if !inner.removing_networks.insert(name.clone()) {
+            return Err(Error::conflict(format!(
+                "proxy {name} is already being removed"
+            )));
+        }
     }
+    let _marker = RemovingNetwork { d, name: &name };
     // The key goes first; the registry entry only when the helper has let go.
     match d
         .netd
@@ -842,9 +895,23 @@ pub fn network_remove(d: &Daemon, name: NetworkName) -> Result<Value> {
         Err(e) => return Err(e),
     }
     let mut inner = d.lock();
-    inner.reg.networks.remove(&name);
-    d.save_registry(&inner)?;
+    commit(d, &mut inner, |reg| {
+        reg.networks.remove(&name);
+        Ok(())
+    })?;
     Ok(json!({ "removed": name }))
+}
+
+/// Clears the marker that [`network_remove`] sets, whichever way it ends.
+struct RemovingNetwork<'a> {
+    d: &'a Daemon,
+    name: &'a NetworkName,
+}
+
+impl Drop for RemovingNetwork<'_> {
+    fn drop(&mut self) {
+        self.d.lock().removing_networks.remove(self.name);
+    }
 }
 
 pub fn network_set(
@@ -872,21 +939,22 @@ pub fn network_set(
         }
     }
     let mut inner = d.lock();
-    let n = inner
-        .reg
-        .networks
-        .get_mut(&name)
-        .ok_or_else(|| Error::not_found(format!("no proxy {name}")))?;
-    if configured_exit.is_some() {
-        n.exit.configured = exit;
-    }
-    if let Some(s) = stun {
-        n.stun_server = (!s.is_empty()).then_some(s);
-    }
-    if max_clients.is_some() {
-        n.max_clients = max_clients.filter(|m| *m > 0);
-    }
-    d.save_registry(&inner)?;
+    commit(d, &mut inner, |reg| {
+        let n = reg
+            .networks
+            .get_mut(&name)
+            .ok_or_else(|| Error::not_found(format!("no proxy {name}")))?;
+        if configured_exit.is_some() {
+            n.exit.configured = exit;
+        }
+        if let Some(s) = &stun {
+            n.stun_server = (!s.is_empty()).then(|| s.clone());
+        }
+        if max_clients.is_some() {
+            n.max_clients = max_clients.filter(|m| *m > 0);
+        }
+        Ok(())
+    })?;
     let n = inner.reg.networks.get(&name).expect("present").clone();
     to(&views::network(&inner, &d.cfg(), &n))
 }
@@ -1103,6 +1171,112 @@ mod tests {
             ["keep"]
         );
         assert!(inner.reg.accounts.is_empty() && inner.live.is_empty());
+    }
+
+    #[test]
+    fn a_failed_write_while_creating_accounts_leaves_nothing_behind() {
+        let d = daemon("assign-rollback");
+        group_create(&d, g("one"), None, None, None).unwrap();
+        proxy_group_create(&d, pg("p"), g("one"), None, 5, None).unwrap();
+        let path = d.layout.registry_file();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(account_assign(&d, vec![ac("n1"), ac("n2")], Some(pg("p")), true).is_err());
+        {
+            let inner = d.lock();
+            assert!(inner.reg.accounts.is_empty() && inner.live.is_empty());
+        }
+        assert!(
+            !d.layout.account_home(&ac("n1")).exists(),
+            "the directories of an account that was never created are gone"
+        );
+        // a change to an account that cannot be saved is not kept in memory either
+        std::fs::remove_dir(&path).unwrap();
+        account_add(&d, ac("known"), vec![], None, None).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(account_set(&d, ac("known"), None, Some("x".into()), None, false).is_err());
+        assert_eq!(d.lock().reg.accounts[&ac("known")].note, None);
+    }
+
+    #[test]
+    fn a_proxy_being_removed_cannot_be_taken_and_the_marker_always_clears() {
+        let d = daemon("removing");
+        define_proxy(&d, "n1");
+        group_create(&d, g("one"), None, None, None).unwrap();
+        d.lock()
+            .removing_networks
+            .insert(NetworkName::new("n1").unwrap());
+        let e = proxy_group_create(
+            &d,
+            pg("p"),
+            g("one"),
+            Some(NetworkName::new("n1").unwrap()),
+            5,
+            None,
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("being removed"), "{e}");
+        d.lock().removing_networks.clear();
+        // with the marker gone it can be taken, and then it cannot be removed
+        proxy_group_create(
+            &d,
+            pg("p"),
+            g("one"),
+            Some(NetworkName::new("n1").unwrap()),
+            5,
+            None,
+        )
+        .unwrap();
+        assert!(network_remove(&d, NetworkName::new("n1").unwrap()).is_err());
+        assert!(d.lock().removing_networks.is_empty());
+        // a removal that fails at the helper (there is none here) clears its marker too
+        proxy_group_set(&d, pg("p"), None, None, None, true, None).unwrap();
+        let e = network_remove(&d, NetworkName::new("n1").unwrap()).unwrap_err();
+        assert!(!e.to_string().contains("being removed"), "{e}");
+        assert!(d.lock().removing_networks.is_empty());
+        assert!(d
+            .lock()
+            .reg
+            .networks
+            .contains_key(&NetworkName::new("n1").unwrap()));
+    }
+
+    #[test]
+    fn an_accounts_own_mode_can_be_taken_away_again() {
+        let d = daemon("clear-mode");
+        account_add(&d, ac("a"), vec![], None, None).unwrap();
+        account_set(&d, ac("a"), None, None, Some(ResourceMode::Minimal), false).unwrap();
+        assert_eq!(
+            d.lock().reg.accounts[&ac("a")].mode,
+            Some(ResourceMode::Minimal)
+        );
+        // asking for both is a mistake
+        assert!(account_set(&d, ac("a"), None, None, Some(ResourceMode::Minimal), true).is_err());
+        account_set(&d, ac("a"), None, None, None, true).unwrap();
+        assert_eq!(d.lock().reg.accounts[&ac("a")].mode, None);
+    }
+
+    #[test]
+    fn the_capacity_of_a_proxy_group_cannot_go_below_what_is_assigned() {
+        let d = daemon("lower-capacity");
+        group_create(&d, g("g"), None, None, None).unwrap();
+        proxy_group_create(&d, pg("p"), g("g"), None, 3, None).unwrap();
+        account_assign(&d, vec![ac("a"), ac("b")], Some(pg("p")), true).unwrap();
+        let e = proxy_group_set(&d, pg("p"), None, Some(1), None, false, None).unwrap_err();
+        assert!(e.to_string().contains("accounts are assigned"), "{e}");
+        assert_eq!(d.lock().reg.proxy_groups[&pg("p")].capacity, 3);
+        proxy_group_set(&d, pg("p"), None, Some(2), None, false, None).unwrap();
+        assert_eq!(d.lock().reg.proxy_groups[&pg("p")].capacity, 2);
+    }
+
+    #[test]
+    fn a_group_that_is_not_there_is_an_error_not_an_empty_list() {
+        let d = daemon("unknown-group");
+        let e = proxy_group_list(&d, Some(g("nope"))).unwrap_err();
+        assert!(matches!(e, Error::NotFound(_)), "{e}");
+        group_create(&d, g("real"), None, None, None).unwrap();
+        assert!(proxy_group_list(&d, Some(g("real"))).is_ok());
     }
 
     #[test]

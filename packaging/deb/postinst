@@ -23,11 +23,12 @@ configure)
     # panel, which would go on holding its port. A panel holds no clients.
     systemctl stop cordial-panel >/dev/null 2>&1 || true
     systemctl daemon-reload >/dev/null 2>&1 || true
-    # dpkg keeps a removed package as "rc" until it is purged, and purging
-    # cordial-hrd runs a script that deletes /var/lib/cordial-hrd, which this
-    # package keeps using. `apt purge '~c'` and similar clean-ups do exactly that.
-    case "$(dpkg-query -W -f='${db:Status-Abbrev}' cordial-hrd 2>/dev/null)" in
-    rc*)
+    # dpkg keeps a removed package in the "config-files" state (`rc`, or `ic` after a
+    # plain `dpkg -i`) until it is purged, and purging cordial-hrd runs a script that
+    # deletes /var/lib/cordial-hrd, which this package keeps using. `apt purge '~c'`
+    # and similar clean-ups do exactly that. Only say so; the old package is not touched.
+    case "$(dpkg-query -W -f='${db:Status-Status}' cordial-hrd 2>/dev/null)" in
+    config-files)
         echo "hrd: WARNING: the old package cordial-hrd is removed but not purged. Do NOT purge it:"
         echo "     its purge script deletes /var/lib/cordial-hrd and /etc/cordial-hrd, which hrd uses"
         echo "     (accounts, stored sessions, WireGuard keys). Leave it as it is; see install.md."

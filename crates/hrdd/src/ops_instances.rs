@@ -13,7 +13,7 @@ use hrd_core::time::{monotonic_ms, now_unix};
 use hrd_core::{Error, Result};
 
 use crate::machine::set_state;
-use crate::ops_registry::to;
+use crate::ops_registry::{commit, to};
 use crate::state::{Daemon, Inner};
 use crate::views::{members_of_group, members_of_proxy_group};
 use crate::{devctl, logtail, netops, runs, runtime, secrets::SecretsState, spawn, views};
@@ -130,6 +130,15 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
             .get(account)
             .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
         if acc.proxy_group.as_ref() != Some(g) {
+            // Only a start that names the proxy group puts the account into it, and
+            // only an account that is in none. Anything else means the account was
+            // moved after the check above; undoing that move would be worse than asking
+            // again.
+            if ask.explicit_proxy_group.is_none() || acc.proxy_group.is_some() {
+                return Err(Error::conflict(format!(
+                    "{account} was moved to another proxy group while its start was being prepared; try again"
+                )));
+            }
             let members = views::members_of_proxy_group(inner, g).len();
             if members as u32 >= gr.capacity {
                 return Err(Error::conflict(format!(
@@ -236,10 +245,12 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
     }
 
     if assign {
-        if let Some(a) = inner.reg.accounts.get_mut(account) {
-            a.proxy_group = group_name.clone();
-        }
-        d.save_registry(inner)?;
+        commit(d, inner, |reg| {
+            if let Some(a) = reg.accounts.get_mut(account) {
+                a.proxy_group = group_name.clone();
+            }
+            Ok(())
+        })?;
     }
     let mode = runs::default_mode(
         &cfg,
@@ -527,6 +538,18 @@ fn matches_filter(inner: &Inner, l: &crate::state::Live, f: &Filter) -> bool {
 
 pub fn status(d: &Daemon, f: Filter) -> Result<Value> {
     let inner = d.lock();
+    if let Some(g) = &f.group {
+        if !inner.reg.groups.contains_key(g) {
+            return Err(Error::not_found(format!(
+                "no group {g} (a proxy group is selected with proxy_group)"
+            )));
+        }
+    }
+    if let Some(p) = &f.proxy_group {
+        if !inner.reg.proxy_groups.contains_key(p) {
+            return Err(Error::not_found(format!("no proxy group {p}")));
+        }
+    }
     let samples = d.samples.lock().unwrap_or_else(|e| e.into_inner());
     let v: Vec<InstanceView> = inner
         .live

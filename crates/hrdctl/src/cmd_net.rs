@@ -300,7 +300,15 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
                 hrd_net::wg::MAX_FILE as u64,
             )?)
             .map_err(|_| Error::invalid("the WireGuard file is not UTF-8"))?;
-            // Validate locally first so that a bad file never leaves this process.
+            // Validate locally first so that a bad file never leaves this process, and
+            // so that no refusal comes after the helper has stored the key.
+            let exit_ip = match exit_ip {
+                Some(s) => Some(
+                    s.parse::<std::net::IpAddr>()
+                        .map_err(|_| Error::invalid(format!("{s:?} is not an IP address")))?,
+                ),
+                None => None,
+            };
             let parsed = hrd_net::wg::parse(&text)?;
             if parsed.dns.is_empty() && dns.is_empty() {
                 return Err(Error::invalid("the file has no DNS line and --dns was not given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
@@ -320,13 +328,7 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
             );
             net.stun_server = stun_server;
             net.max_clients = max_clients;
-            net.exit.configured = match exit_ip {
-                Some(s) => Some(
-                    s.parse()
-                        .map_err(|_| Error::invalid(format!("{s:?} is not an IP address")))?,
-                ),
-                None => None,
-            };
+            net.exit.configured = exit_ip;
             let v: NetworkView = ctx.client()?.call(Request::NetworkRegister {
                 network: Box::new(net),
             })?;
@@ -487,8 +489,11 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
         }
         ProxyCmd::Remove { name } => {
             let v: Value = ctx.client()?.call(Request::NetworkRemove { name })?;
-            ctx.out
-                .line(format!("removed {}", v["removed"].as_str().unwrap_or("")));
+            if ctx.out.json {
+                ctx.out.value(&v);
+            } else {
+                println!("removed {}", v["removed"].as_str().unwrap_or(""));
+            }
         }
     }
     Ok(())
@@ -511,7 +516,7 @@ pub struct GatewayArgs {
     #[arg(long, default_value = "eth0")]
     uplink: String,
     /// Proxy groups to include (default: every proxy group with a proxy and a configured exit)
-    #[arg(long = "proxy-group")]
+    #[arg(long = "proxy-group", alias = "group")]
     groups: Vec<ProxyGroupName>,
     /// Forward a port of the gateway to this machine's panel: its address on the management tunnel
     #[arg(long)]

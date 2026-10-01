@@ -116,6 +116,15 @@ impl Backend for Real {
     }
 
     fn add_network(&self, s: NetworkSpec) -> Result<Value> {
+        // Everything that can be wrong is checked before the helper stores the key:
+        // a refusal after that would leave a stored proxy the registry knows nothing of.
+        let exit = match s.exit_ip {
+            Some(e) if !e.is_empty() => Some(
+                e.parse::<IpAddr>()
+                    .map_err(|_| Error::invalid(format!("{e:?} is not an IP address")))?,
+            ),
+            _ => None,
+        };
         let parsed = hrd_net::wg::parse(&s.config)?;
         if parsed.dns.is_empty() && s.dns.is_empty() {
             return Err(Error::invalid("the file has no DNS line and none was given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
@@ -125,13 +134,6 @@ impl Backend for Real {
             config: s.config,
             dns: s.dns,
         })?;
-        let exit = match s.exit_ip {
-            Some(e) if !e.is_empty() => Some(
-                e.parse::<IpAddr>()
-                    .map_err(|_| Error::invalid(format!("{e:?} is not an IP address")))?,
-            ),
-            _ => None,
-        };
         let net = hrd_core::model::Network {
             name: summary.name.clone(),
             backend: hrd_core::model::NetBackend::WireguardNetns,

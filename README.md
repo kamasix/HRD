@@ -21,11 +21,14 @@ the Roblox **accounts** that leave through it. The panel's main screen is exactl
 that, and `hrdctl tree` prints it:
 
 ```
-adopt-me   place 920587237                         12/25 connected
-  de-1   proxy de-1  ready  203.0.113.11            12/20 accounts
-    alt-01   connected
-    alt-02   stopped
-  nl-1   proxy nl-1  ready                           0/5 accounts
+adopt-me  place 920587237  mode -  (14 account(s), 11 live)
+  de-1  proxy de-1  ready  12/20 account(s)
+    alt-01  connected
+    alt-02  stopped
+    ...
+  nl-1  proxy nl-1  ready  2/5 account(s)
+    nl-01  stopped
+    nl-02  stopped
 ```
 
 Start and Stop work at every level: a group, a proxy group, or one account. A

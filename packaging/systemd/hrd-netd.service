@@ -7,8 +7,8 @@ Before=hrdd.service
 [Service]
 Type=exec
 ExecStart=/usr/lib/hrd/hrd-netd
-# Applying a group's network is an explicit operator command (`hrdctl network
-# apply`); nothing is applied when this service starts unless netd.toml says so.
+# Applying the proxy groups' networks is an explicit operator command (`hrdctl
+# proxy apply`); nothing is applied when this service starts unless netd.toml says so.
 Restart=on-failure
 RestartSec=5
 UMask=0077

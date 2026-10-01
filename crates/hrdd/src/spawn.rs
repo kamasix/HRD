@@ -558,7 +558,7 @@ mod tests {
         }
         assert_eq!(get("WLR_RENDERER").as_deref(), Some("pixman"));
         assert!(get("VK_DRIVER_FILES").unwrap().contains("lvp_icd"));
-        // no group: run the client directly (only reachable with allow_unrouted)
+        // no proxy group: run the client directly (only reachable with allow_unrouted)
         assert_eq!(p.program, PathBuf::from("/usr/lib/hrd/cordial-run"));
     }
 

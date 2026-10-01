@@ -12,7 +12,7 @@ use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, RwLock};
 
 use hrd_core::config::Config;
-use hrd_core::ids::{AccountName, ProxyGroupName};
+use hrd_core::ids::{AccountName, NetworkName, ProxyGroupName};
 use hrd_core::layout::Layout;
 use hrd_core::model::{InstanceRecord, Registry, State};
 use hrd_core::proto::Event;
@@ -100,6 +100,10 @@ pub struct Inner {
     pub net_status: BTreeMap<ProxyGroupName, (u64, GroupStatus)>,
     pub net_error: Option<(u64, String)>,
     pub spawn_seq: usize,
+    /// Proxies whose key the helper is being asked to let go of. The lock is not
+    /// held across that call, so this is what keeps a proxy group from taking the
+    /// proxy meanwhile (it would be left pointing at a proxy that is gone).
+    pub removing_networks: std::collections::BTreeSet<NetworkName>,
 }
 
 pub struct Events {
@@ -201,8 +205,9 @@ impl Daemon {
 
 /// Load the registry, refusing a newer schema than this build understands. An
 /// older one is upgraded and written back at once; the file as it was is kept
-/// beside it (`registry.json.schema1`), once, in case the older build is wanted
-/// again.
+/// beside it (`registry.json.schema1`) in case the older build is wanted again.
+/// A backup that is already there is never replaced: if the older build was used
+/// in between, this file is a different one and goes to `.schema1.1`, `.schema1.2`...
 pub fn load_registry(layout: &Layout) -> Result<Registry> {
     let path = layout.registry_file();
     match fsutil::read_limited_opt(&path, 64 * 1024 * 1024)? {
@@ -211,10 +216,13 @@ pub fn load_registry(layout: &Layout) -> Result<Registry> {
             let (r, from) = Registry::from_slice(&b)
                 .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
             if let Some(old) = from {
-                let keep = path.with_extension(format!("json.schema{old}"));
-                if !keep.exists() {
-                    fsutil::atomic_write(&keep, &b, 0o600)?;
+                let mut keep = path.with_extension(format!("json.schema{old}"));
+                let mut n = 0;
+                while keep.exists() {
+                    n += 1;
+                    keep = path.with_extension(format!("json.schema{old}.{n}"));
                 }
+                fsutil::atomic_write(&keep, &b, 0o600)?;
                 fsutil::write_json_atomic(&path, &r, 0o600)?;
                 eprintln!(
                     "<5>hrdd: the registry was upgraded from schema {old} to {} (the old file is kept as {})",
@@ -267,6 +275,7 @@ pub mod testing {
                 net_status: BTreeMap::new(),
                 net_error: None,
                 spawn_seq: 0,
+                removing_networks: Default::default(),
             }),
             deleg: None,
             events: Events::new(),
@@ -288,7 +297,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_older_registry_is_upgraded_on_load_and_the_old_file_is_kept_once() {
+    fn an_older_registry_is_upgraded_on_load_and_no_backup_is_ever_replaced() {
         let d = testing::daemon("upgrade");
         let path = d.layout.registry_file();
         let v1 = br#"{"schema":1,
@@ -308,11 +317,28 @@ mod tests {
         let keep = path.with_extension("json.schema1");
         assert_eq!(std::fs::read(&keep).unwrap(), v1);
 
-        // loading again changes nothing and does not touch the backup
-        std::fs::write(&keep, b"first").unwrap();
+        // loading the upgraded file again changes nothing and writes no backup
         let again = load_registry(&d.layout).unwrap();
         assert_eq!(again.proxy_groups.len(), 1);
-        assert_eq!(std::fs::read(&keep).unwrap(), b"first");
+        assert_eq!(std::fs::read(&keep).unwrap(), v1);
+        assert!(!path.with_extension("json.schema1.1").exists());
+
+        // The older build was used again (its file restored, then changed) and the
+        // registry is upgraded a second time: the first backup stays as it was and
+        // the file this upgrade replaced is kept as well.
+        let v1_later = br#"{"schema":1,
+            "accounts":{"alt-02":{"name":"alt-02","group":"g01","created_at":3,"auth":{}}},
+            "groups":{"g01":{"name":"g01","capacity":20,"created_at":2}}}"#;
+        std::fs::write(&path, v1_later).unwrap();
+        let second = load_registry(&d.layout).unwrap();
+        assert!(second
+            .accounts
+            .contains_key(&AccountName::new("alt-02").unwrap()));
+        assert_eq!(std::fs::read(&keep).unwrap(), v1);
+        assert_eq!(
+            std::fs::read(path.with_extension("json.schema1.1")).unwrap(),
+            v1_later
+        );
     }
 
     #[test]

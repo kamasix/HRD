@@ -107,11 +107,14 @@ pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
             }
         }
         GroupCmd::Remove { name, cascade } => {
-            let v: Value = cl.call(Request::GroupRemove { name, cascade })?;
+            let v: Value = cl.call(Request::GroupRemove {
+                name: name.clone(),
+                cascade,
+            })?;
             if ctx.out.json {
                 ctx.out.value(&v);
             } else {
-                println!("{}", v["note"].as_str().unwrap_or("removed"));
+                print_removed("group", name.as_str(), &v);
             }
         }
         GroupCmd::Start {
@@ -144,9 +147,13 @@ fn print_start(ctx: &Ctx, v: &Value, key: &str, what: &str) {
         return;
     }
     let q = v["queued"].as_array().map(|a| a.len()).unwrap_or(0);
+    let name = v[key].as_str().unwrap_or("");
+    if q == 0 && v["skipped"].as_array().is_none_or(|a| a.is_empty()) {
+        println!("nothing to start: {what} {name} has no accounts");
+        return;
+    }
     println!(
-        "{q} queued in {what} {}; starts are paced by the scheduler (see `hrdctl status`)",
-        v[key].as_str().unwrap_or("")
+        "{q} queued in {what} {name}; starts are paced by the scheduler (see `hrdctl status`)"
     );
     for s in v["skipped"].as_array().into_iter().flatten() {
         println!(
@@ -154,6 +161,33 @@ fn print_start(ctx: &Ctx, v: &Value, key: &str, what: &str) {
             s["account"].as_str().unwrap_or("?"),
             s["reason"].as_str().unwrap_or("?")
         );
+    }
+}
+
+/// What removing a group or a proxy group did, beyond the daemon's one-line note.
+fn print_removed(what: &str, name: &str, v: &Value) {
+    let gone: Vec<&str> = v["proxy_groups_removed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.as_str())
+        .collect();
+    let freed = v["accounts_unassigned"].as_u64().unwrap_or(0);
+    let mut line = format!("removed {what} {name}");
+    if !gone.is_empty() {
+        line.push_str(&format!(
+            "; its proxy group(s) removed too: {}",
+            gone.join(", ")
+        ));
+    }
+    if freed > 0 {
+        line.push_str(&format!(
+            "; {freed} account(s) are now in no proxy group (they are still registered)"
+        ));
+    }
+    println!("{line}");
+    if let Some(note) = v["note"].as_str().filter(|n| *n != "removed") {
+        println!("{note}");
     }
 }
 
@@ -294,11 +328,14 @@ pub fn proxy_group(ctx: &Ctx, c: ProxyGroupCmd) -> Result<()> {
             }
         }
         ProxyGroupCmd::Remove { name, unassign } => {
-            let v: Value = cl.call(Request::ProxyGroupRemove { name, unassign })?;
+            let v: Value = cl.call(Request::ProxyGroupRemove {
+                name: name.clone(),
+                unassign,
+            })?;
             if ctx.out.json {
                 ctx.out.value(&v);
             } else {
-                println!("{}", v["note"].as_str().unwrap_or("removed"));
+                print_removed("proxy group", name.as_str(), &v);
             }
         }
         ProxyGroupCmd::Start {
@@ -784,7 +821,12 @@ pub fn logs(ctx: &Ctx, id: AccountName, lines: usize, follow: bool) -> Result<()
         |ev| {
             if let Some(arr) = ev.as_array() {
                 for l in arr {
-                    println!("{}", l.as_str().unwrap_or(""));
+                    let l = l.as_str().unwrap_or("");
+                    if json {
+                        println!("{}", serde_json::json!({ "line": l }));
+                    } else {
+                        println!("{l}");
+                    }
                 }
             } else if let Ok(Event::Log { line, .. }) = serde_json::from_value::<Event>(ev.clone())
             {

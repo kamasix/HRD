@@ -69,7 +69,8 @@ are **rejected** (the file is not run or partly used); only `PrivateKey`,
 private key, and it decides where the traffic of every account behind it goes. So
 `hrdctl proxy add` needs root, and the helper refuses the service user, and with
 it the web panel, unless `allow_service_define = true` is set in the root-owned
-`/etc/cordial-hrd/netd.toml` (then `sudo systemctl restart hrd-netd`). Off by
+`/etc/cordial-hrd/netd.toml` (then `sudo systemctl restart hrd-netd`; the helper reads
+the file only if root owns it and no one else can write it). Off by
 default. With it on, adding a proxy in the panel works as described in
 [panel.md](panel.md). Planning, applying and removing are always open to the
 service user, and work only on proxies that were defined.

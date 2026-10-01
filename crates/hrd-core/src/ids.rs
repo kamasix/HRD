@@ -131,7 +131,7 @@ name_type!(
 name_type!(
     /// Accounts that leave through one proxy: one tunnel, one network
     /// namespace. It names the namespace file, so it has the same shape as a
-    /// network name and, unlike a group name, is unique across every group.
+    /// network name, and it is unique across all groups (not only within one).
     ProxyGroupName,
     "proxy group",
     24,
@@ -155,8 +155,22 @@ name_type!(
 /// Stored as a number: it is interpolated into a launch URL later, and a
 /// number cannot carry a `&` or a `/` with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "u64", into = "u64")]
 pub struct PlaceId(u64);
+
+// A number read from the socket or the panel goes through `new` as well.
+impl TryFrom<u64> for PlaceId {
+    type Error = Error;
+    fn try_from(n: u64) -> Result<Self> {
+        Self::new(n)
+    }
+}
+
+impl From<PlaceId> for u64 {
+    fn from(p: PlaceId) -> u64 {
+        p.0
+    }
+}
 
 impl PlaceId {
     pub fn new(n: u64) -> Result<Self> {
@@ -306,6 +320,20 @@ mod tests {
         ] {
             assert!(s.parse::<PlaceId>().is_err(), "{s:?}");
         }
+    }
+
+    #[test]
+    fn a_place_id_read_from_json_is_checked_too() {
+        // the socket and the panel send numbers, not strings
+        assert_eq!(
+            serde_json::from_str::<PlaceId>("920587237").unwrap().get(),
+            920587237
+        );
+        assert!(serde_json::from_str::<PlaceId>("0").is_err());
+        assert!(serde_json::from_str::<PlaceId>("9007199254740992").is_err());
+        assert!(serde_json::from_str::<PlaceId>("-5").is_err());
+        let back = serde_json::to_string(&PlaceId::new(7).unwrap()).unwrap();
+        assert_eq!(back, "7", "still a plain number on the wire");
     }
 
     #[test]

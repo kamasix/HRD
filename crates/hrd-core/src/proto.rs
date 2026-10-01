@@ -23,7 +23,11 @@ use crate::config::Config;
 use crate::ids::{AccountName, GroupName, NetworkName, PlaceId, ProxyGroupName};
 use crate::model::{AuthStatus, InstanceRecord, Network, Readiness, ResourceMode, RunKind, State};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Both ends send it in `Hello` and refuse a different one, so a client that was
+/// not restarted after an upgrade says so instead of being half understood (an
+/// unknown field is ignored by serde, which would read as success). 2: groups
+/// hold proxy groups (the shape of the account, group and start requests).
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_LINE: usize = 1 << 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +67,10 @@ pub enum Request {
         labels: Option<Vec<String>>,
         note: Option<String>,
         mode: Option<ResourceMode>,
+        /// Take the account's own mode away, so that its group's (or the daemon's)
+        /// applies again.
+        #[serde(default)]
+        clear_mode: bool,
     },
     /// `confirm` must equal the account name; checked by the daemon so that no
     /// client can skip it.

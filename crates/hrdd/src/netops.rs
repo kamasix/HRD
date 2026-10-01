@@ -143,6 +143,19 @@ pub fn readiness(
             Readiness::NotApplied,
             Some("the namespace does not exist: run `hrdctl proxy apply`".into()),
         ),
+        // The namespace is there but was last wired for another proxy (the proxy
+        // group was pointed elsewhere, or re-created, and not applied since): a
+        // client started now would leave through the old exit.
+        Some((_, st)) if st.network != group.network => (
+            Readiness::NotApplied,
+            Some(match &st.network {
+                Some(n) => format!(
+                    "the namespace is wired to proxy {n}, not to this proxy group's proxy: run `hrdctl proxy apply`"
+                ),
+                None => "the namespace was not applied for this proxy: run `hrdctl proxy apply`"
+                    .into(),
+            }),
+        ),
         Some((_, st)) if !st.interface_present || !st.link_up || !st.problems.is_empty() => (
             Readiness::Broken,
             Some(if st.problems.is_empty() {
@@ -218,4 +231,60 @@ pub fn check(d: &Daemon, name: &NetworkName) -> Result<serde_json::Value> {
         "matches_configured": matches,
         "note": "a STUN reply proves the UDP path out of this namespace; it does not prove a game server will accept the address",
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hrd_core::ids::{GroupName, NetworkName};
+    use hrd_core::model::ProxyGroup;
+
+    fn pg(s: &str) -> ProxyGroupName {
+        ProxyGroupName::new(s).unwrap()
+    }
+    fn nn(s: &str) -> NetworkName {
+        NetworkName::new(s).unwrap()
+    }
+    fn wired(network: &str, handshake: u64) -> GroupStatus {
+        GroupStatus {
+            group: Some(pg("p")),
+            network: Some(nn(network)),
+            namespace_present: true,
+            interface_present: true,
+            link_up: true,
+            latest_handshake: Some(handshake),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_namespace_wired_for_another_proxy_is_not_ready() {
+        let d = crate::state::testing::daemon("readiness-wired");
+        let mut inner = d.lock();
+        inner.reg.proxy_groups.insert(
+            pg("p"),
+            ProxyGroup {
+                name: pg("p"),
+                group: GroupName::new("g").unwrap(),
+                network: Some(nn("n2")),
+                capacity: 5,
+                note: None,
+                created_at: 0,
+            },
+        );
+        let now = now_unix();
+        // pointed at n2 but still wired to n1: a start now would leave through n1
+        inner.net_status.insert(pg("p"), (now, wired("n1", now)));
+        let (r, why) = readiness(&inner, 300, &pg("p"));
+        assert_eq!(r, Readiness::NotApplied);
+        assert!(why.unwrap().contains("n1"));
+        // never recorded by the helper at all
+        let mut unrecorded = wired("n2", now);
+        unrecorded.network = None;
+        inner.net_status.insert(pg("p"), (now, unrecorded));
+        assert_eq!(readiness(&inner, 300, &pg("p")).0, Readiness::NotApplied);
+        // wired for its own proxy, with a fresh handshake
+        inner.net_status.insert(pg("p"), (now, wired("n2", now)));
+        assert_eq!(readiness(&inner, 300, &pg("p")).0, Readiness::Ready);
+    }
 }

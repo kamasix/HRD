@@ -41,20 +41,32 @@ pub fn bind(path: &Path, gid: Option<u32>, mode: u32) -> Result<UnixListener> {
             ))
         }
     }
-    // The socket is created with no permissions for anyone but its owner, and
-    // opened up through the descriptor afterwards, so that there is no moment
-    // at which it is reachable with the wrong mode. The directory is root-owned
-    // and not writable by the service user, so the path cannot be swapped.
-    let old = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o177));
+    // The socket is created with exactly the mode it keeps (the umask takes away
+    // the rest) and then given to the service group, so that there is no moment
+    // at which anyone else can reach it. `fchmod` and `fchown` on the listening
+    // descriptor would not do: they change the socket's own inode, not the file
+    // in the directory, and that file is what a connecting process is checked
+    // against. The directory is root-owned and not writable by the service user,
+    // so the path cannot be swapped.
+    let old = rustix::process::umask(rustix::fs::Mode::from_raw_mode(!mode & 0o777));
     let bound = UnixListener::bind(path);
     rustix::process::umask(old);
     let l = bound.map_err(|e| Error::io(format!("bind {}", path.display()), e))?;
     if let Some(gid) = gid {
-        rustix::fs::fchown(&l, None, Some(rustix::fs::Gid::from_raw(gid)))
-            .map_err(|e| Error::io("chown the socket", std::io::Error::from(e)))?;
+        rustix::fs::chownat(
+            rustix::fs::CWD,
+            path,
+            None,
+            Some(rustix::fs::Gid::from_raw(gid)),
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(|e| {
+            Error::io(
+                "give the socket to the service group",
+                std::io::Error::from(e),
+            )
+        })?;
     }
-    rustix::fs::fchmod(&l, rustix::fs::Mode::from_raw_mode(mode))
-        .map_err(|e| Error::io("chmod the socket", std::io::Error::from(e)))?;
     Ok(l)
 }
 
@@ -347,5 +359,33 @@ mod policy_tests {
         // allow_service_define = true in netd.toml
         assert!(may_define(998, true));
         assert!(may_define(0, true));
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::bind;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn the_socket_file_has_its_mode_and_group_from_the_start() {
+        let dir = std::env::temp_dir().join(format!("hrd-netd-bind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("netd.sock");
+        let gid = rustix::process::getgid().as_raw();
+        let _listener = bind(&path, Some(gid), 0o660).unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        // what a connecting process is checked against is this file, not the descriptor
+        assert_eq!(meta.permissions().mode() & 0o777, 0o660);
+        assert_eq!(meta.gid(), gid);
+        // a stale socket from an earlier run is replaced, not an error
+        drop(_listener);
+        let again = bind(&path, None, 0o600).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

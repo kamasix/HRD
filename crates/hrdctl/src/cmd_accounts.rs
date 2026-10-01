@@ -13,7 +13,8 @@ use serde_json::Value;
 use hrd_core::ids::AccountName;
 use hrd_core::model::State;
 use hrd_core::proto::{
-    AccountView, ExportedAccount, LoginAction, LoginKey, LoginView, Request, ShotView,
+    AccountView, ExportedAccount, GroupView, LoginAction, LoginKey, LoginView, ProxyGroupView,
+    Request, ShotView,
 };
 use hrd_core::{fsutil, Error, Result};
 
@@ -38,10 +39,17 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
             if ctx.out.json {
                 ctx.out.data(&v);
             } else {
-                println!(
-                    "account {} added (no session yet: hrdctl account login {})",
-                    v.name, v.name
-                );
+                if v.proxy_group.is_some() {
+                    println!(
+                        "account {} added (no session yet: hrdctl account login {})",
+                        v.name, v.name
+                    );
+                } else {
+                    println!(
+                        "account {} added, in no proxy group yet: hrdctl account assign PROXY_GROUP {}; then hrdctl account login {}",
+                        v.name, v.name, v.name
+                    );
+                }
             }
         }
         AccountCmd::Assign {
@@ -68,7 +76,24 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
             proxy_group,
             label,
         } => {
-            let v: Vec<AccountView> = ctx.client()?.call(Request::AccountList)?;
+            let mut cl = ctx.client()?;
+            // A name that is not there is an error, not an empty list: `--group` used to
+            // mean what `--proxy-group` means now, and a typo should not look like "none".
+            if let Some(g) = &group {
+                let all: Vec<GroupView> = cl.call(Request::GroupList)?;
+                if !all.iter().any(|x| &x.name == g) {
+                    return Err(Error::not_found(format!(
+                        "no group {g} (a proxy group is selected with --proxy-group)"
+                    )));
+                }
+            }
+            if let Some(p) = &proxy_group {
+                let all: Vec<ProxyGroupView> = cl.call(Request::ProxyGroupList { group: None })?;
+                if !all.iter().any(|x| &x.name == p) {
+                    return Err(Error::not_found(format!("no proxy group {p}")));
+                }
+            }
+            let v: Vec<AccountView> = cl.call(Request::AccountList)?;
             let v: Vec<AccountView> = v
                 .into_iter()
                 .filter(|a| {
@@ -125,12 +150,14 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
             labels,
             note,
             mode,
+            clear_mode,
         } => {
             let v: AccountView = ctx.client()?.call(Request::AccountSet {
                 name,
                 labels,
                 note,
                 mode,
+                clear_mode,
             })?;
             if ctx.out.json {
                 ctx.out.data(&v);

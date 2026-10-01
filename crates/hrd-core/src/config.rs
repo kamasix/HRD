@@ -363,9 +363,9 @@ impl Default for RuntimeCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct NetworkCfg {
-    /// Permit proxy groups with no proxy. Off: an account whose proxy group has
-    /// no tunnel is refused, because "no tunnel" must never quietly mean "the
-    /// server's own address".
+    /// Permit starting an account whose proxy group has no proxy, or that is in
+    /// no proxy group at all. Off: both are refused, because "no tunnel" must
+    /// never quietly mean "the server's own address".
     pub allow_unrouted: bool,
     /// How old a WireGuard handshake may be before the network is reported
     /// `unverified`, in seconds. WireGuard re-handshakes about every two

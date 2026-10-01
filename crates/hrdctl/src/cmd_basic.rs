@@ -185,7 +185,7 @@ pub fn init(ctx: &Ctx, a: InitArgs) -> Result<()> {
     println!();
     print_checks(&ctx.out, &checks);
     println!(
-        "\nNothing was started, no account was touched and no network was changed.\nNext:\n  1. systemctl enable --now hrd-netd hrdd\n  2. hrdctl secrets unlock --create\n  3. hrdctl runtime import --apk /path/to/roblox.apk\n  4. hrdctl network add NAME --wireguard-config FILE   (per group)\n  5. hrdctl account add NAME; hrdctl account login NAME\nSee docs/install.md."
+        "\nNothing was started, no account was touched and no network was changed.\nNext:\n  1. systemctl enable --now hrd-netd hrdd\n  2. hrdctl secrets unlock --create\n  3. hrdctl runtime import --apk /path/to/roblox.apk\n  4. hrdctl group create NAME --place-id N                 (a game)\n  5. sudo hrdctl proxy add NAME --wireguard-config FILE    (a proxy)\n  6. hrdctl proxy-group create NAME --group GROUP --proxy NAME\n  7. hrdctl account add NAME --proxy-group NAME; hrdctl account login NAME\nSee docs/install.md."
     );
     Ok(())
 }

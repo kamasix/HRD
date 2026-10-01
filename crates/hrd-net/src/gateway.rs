@@ -288,8 +288,11 @@ pub fn plan(input: &GatewayInput) -> Result<GatewayPlan> {
         "  7. Do not close your SSH session until you have opened a second one and it works.\n",
     );
     readme.push_str("     Neither file touches the `inet filter` table or the SSH port.\n");
-    readme.push_str("\nVerify (from the home server, after `hrdctl network apply`):\n");
-    readme.push_str("  hrdctl network check <name> --stun <your STUN server>   # the address the UDP path exits from\n");
+    readme.push_str("\nVerify (from the home server, after `hrdctl proxy apply`):\n");
+    readme.push_str(
+        "  hrdctl proxy set <name> --stun-server HOST:PORT   # a STUN server you choose\n",
+    );
+    readme.push_str("  hrdctl proxy check <name>                         # the address the UDP path exits from\n");
     readme.push_str("\nRemove:\n");
     readme.push_str("  nft delete table inet hrd_gw; nft delete table ip hrd_gw_nat\n");
     readme.push_str(&format!(

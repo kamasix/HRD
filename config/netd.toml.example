@@ -1,4 +1,5 @@
-# /etc/cordial-hrd/netd.toml: read by the privileged helper (hrd-netd).
+# /etc/cordial-hrd/netd.toml: read by the privileged helper (hrd-netd). The helper refuses a file
+# that is not owned by root or that anyone else can write (chown root:root, chmod 0644).
 # service_user / service_group: who may use the helper (the daemon runs as this user)
 # apply_on_start: apply every proxy group when the helper starts. Off: applying is always an explicit command.
 service_user = "cordial"

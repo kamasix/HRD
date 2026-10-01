@@ -25,7 +25,9 @@ say() { printf '\n==> %s\n' "$*"; }
   git submodule update --init --recursive
 }
 
-if dpkg -s cordial-hrd >/dev/null 2>&1; then
+# `dpkg -s` also succeeds for a package that was removed but not purged (state rc), which is
+# what the old one becomes once hrd has replaced it; only a package that is installed counts.
+if [ "$(dpkg-query -W -f='${db:Status-Status}' cordial-hrd 2>/dev/null)" = installed ]; then
   cat <<'WARN'
 
 The package that was called cordial-hrd is installed. It is replaced by hrd (the

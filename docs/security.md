@@ -47,8 +47,9 @@ never in the repository, packages or CI artifacts.
   the SSH key to the machine. Planning, applying and removing proxy groups is open
   to the service user either way, and works only on proxies that were defined. Its
   socket is in the root-owned
-  `/run/cordial-hrd-netns/` (created `0600` and opened through the descriptor),
-  and every client of it checks that the peer is root before sending anything.
+  `/run/cordial-hrd-netns/` (created `0660`, owner root, and given to the service
+  group before anyone else can reach it), and every client of it checks that the
+  peer is root before sending anything.
   It locates `ip`, `wg`, `nft` in system directories, requires them root-owned,
   and runs them without a shell, with a cleared environment. Private keys are
   stored root-only; **the service user cannot read them**, but it can cause them

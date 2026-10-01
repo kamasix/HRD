@@ -181,6 +181,7 @@ fn run(args: Args, layout: Layout) -> Result<()> {
             net_status: BTreeMap::new(),
             net_error: None,
             spawn_seq: 0,
+            removing_networks: Default::default(),
         }),
         deleg,
         events: Events::new(),

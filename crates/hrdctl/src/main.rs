@@ -169,8 +169,8 @@ enum AccountCmd {
         labels: Vec<String>,
         #[arg(long)]
         note: Option<String>,
-        /// Put it straight into this proxy group
-        #[arg(long)]
+        /// Put it straight into this proxy group (`--group` is the old spelling)
+        #[arg(long, alias = "group")]
         proxy_group: Option<ProxyGroupName>,
     },
     /// Put accounts into a proxy group (moving them out of the one they are in)
@@ -214,6 +214,9 @@ enum AccountCmd {
         note: Option<String>,
         #[arg(long)]
         mode: Option<ResourceMode>,
+        /// Take the account's own mode away (its group's mode applies again)
+        #[arg(long, conflicts_with = "mode")]
+        clear_mode: bool,
     },
     /// Erase the stored session (the account stays registered)
     Logout { name: AccountName },
@@ -422,7 +425,9 @@ enum InstanceCmd {
         /// The place to join (default: the place of the account's group)
         #[arg(long)]
         place_id: Option<PlaceId>,
-        #[arg(long)]
+        /// Put the account in this proxy group first, and leave it there (`--group` is
+        /// the old spelling). Without it the account starts in the one it is in.
+        #[arg(long, alias = "group")]
         proxy_group: Option<ProxyGroupName>,
         #[arg(long)]
         private_server_code: Option<String>,

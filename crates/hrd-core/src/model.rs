@@ -120,8 +120,9 @@ impl State {
         )
     }
 
-    /// States that occupy a slot: counted against the proxy group capacity check at
-    /// start and shown as "live" in summaries.
+    /// States that occupy a slot: counted against `scheduler.max_instances` and
+    /// a proxy's `max_clients`, and shown as "live" in summaries. (A proxy group's
+    /// capacity counts the accounts assigned to it, running or not.)
     pub fn is_live(self) -> bool {
         matches!(self, State::Queued) || self.expects_processes()
     }
@@ -300,7 +301,7 @@ pub struct ExitInfo {
     /// maps this proxy group to. Nothing verifies it.
     #[serde(default)]
     pub configured: Option<IpAddr>,
-    /// What a probe actually saw. Filled only by `network check`.
+    /// What a probe actually saw. Filled only by `proxy check`.
     #[serde(default)]
     pub observed: Option<ObservedExit>,
 }
@@ -344,7 +345,7 @@ pub struct Network {
     pub ipv6: Ipv6Policy,
     #[serde(default)]
     pub exit: ExitInfo,
-    /// STUN server for `network check`. Unset by default: the manager does not
+    /// STUN server for `proxy check`. Unset by default: the manager does not
     /// contact a third party the operator did not name.
     #[serde(default)]
     pub stun_server: Option<String>,

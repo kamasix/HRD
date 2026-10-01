@@ -30,7 +30,18 @@ sessions, networks and settings stay where they are. What changes:
 * running clients are **not** carried over to the new daemon: stop them first
   (`cordialctl stop-all`);
 * the old package's removal tears down the applied network namespaces; run
-  `hrdctl network apply` again.
+  `hrdctl proxy apply` again.
+
+What a command is now called, if you have scripts (`cordialctl` is `hrdctl`):
+
+| before | now |
+|---|---|
+| `network ...` | `proxy ...` (`network` still works) |
+| `group create G --network N --capacity C` | `group create GAME --place-id P`, then `proxy-group create G --group GAME --proxy N --capacity C` |
+| `group list`, `group set`, `group remove`, `group assign` | the same names are for the games now; the old groups are `proxy-group list`, `set`, `remove`, `assign` |
+| `account add A --group G`, `instance start A --group G`, `gateway plan --group G` | `--proxy-group G` (`--group` is still accepted there) |
+| `instance start A --place-id P` | the place comes from the group; `--place-id` is optional |
+| `status --group G`, `account list --group G` | `--group` selects a game; `--proxy-group` selects the old kind of group |
 
 **Do not purge `cordial-hrd`.** Removing it (which `apt` does for you) leaves it in
 dpkg's "rc" state, and its purge script deletes `/var/lib/cordial-hrd`,

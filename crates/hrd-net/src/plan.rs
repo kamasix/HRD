@@ -1,7 +1,7 @@
 //! What applying a group's network means, as data.
 //!
 //! A plan is a list of [`Step`]s. The same enum is what the privileged helper
-//! executes, so what `hrdctl network plan` prints and what
+//! executes, so what `hrdctl proxy plan` prints and what
 //! `hrd-netd` does cannot drift apart: adding an action means adding a
 //! variant, and the compiler then demands both a description here and an
 //! executor there.

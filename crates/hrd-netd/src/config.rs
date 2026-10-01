@@ -1,6 +1,8 @@
 //! `/etc/cordial-hrd/netd.toml` and the users it refers to.
 
 use std::fs;
+use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use hrd_core::{Error, Result};
@@ -39,13 +41,29 @@ impl Default for NetdConfig {
 
 impl NetdConfig {
     pub fn load(path: &Path) -> Result<NetdConfig> {
-        match fs::read_to_string(path) {
-            Ok(t) => {
-                toml::from_str(&t).map_err(|e| Error::invalid(format!("{}: {e}", path.display())))
+        let mut file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(NetdConfig::default()),
+            Err(e) => return Err(Error::io(format!("read {}", path.display()), e)),
+        };
+        // This file decides whether the service user may hand the helper a private
+        // key. Whoever can write it can switch that on, so a helper running as
+        // root insists on a file that only root can write.
+        if rustix::process::geteuid().is_root() {
+            let meta = file
+                .metadata()
+                .map_err(|e| Error::io(format!("stat {}", path.display()), e))?;
+            if meta.uid() != 0 || meta.mode() & 0o022 != 0 {
+                return Err(Error::Denied(format!(
+                    "{} must be owned by root and writable by no one else: it decides who may define a proxy",
+                    path.display()
+                )));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(NetdConfig::default()),
-            Err(e) => Err(Error::io(format!("read {}", path.display()), e)),
         }
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|e| Error::io(format!("read {}", path.display()), e))?;
+        toml::from_str(&text).map_err(|e| Error::invalid(format!("{}: {e}", path.display())))
     }
 }
 
@@ -73,6 +91,7 @@ pub fn lookup_group(group_text: &str, name: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn the_service_user_may_not_define_a_tunnel_unless_the_file_says_so() {
@@ -96,6 +115,32 @@ mod tests {
         let group = "root:x:0:\ncordial:x:997:alice,bob\n";
         assert_eq!(lookup_group(group, "cordial"), Some(997));
         assert_eq!(lookup_group(group, "cord"), None);
+    }
+
+    #[test]
+    fn a_root_helper_refuses_a_config_file_that_others_can_write_or_do_not_own() {
+        if !rustix::process::geteuid().is_root() {
+            return; // the check is for the privileged helper; nothing to see as anyone else
+        }
+        let dir = std::env::temp_dir().join(format!("hrd-netd-cfg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("netd.toml");
+        fs::write(&f, "allow_service_define = true\n").unwrap();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(NetdConfig::load(&f).unwrap().allow_service_define);
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o664)).unwrap();
+        assert!(matches!(NetdConfig::load(&f), Err(Error::Denied(_))));
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
+        rustix::fs::chown(&f, Some(rustix::fs::Uid::from_raw(1)), None).unwrap();
+        assert!(matches!(NetdConfig::load(&f), Err(Error::Denied(_))));
+        // no file at all is the defaults
+        assert!(
+            !NetdConfig::load(&dir.join("absent.toml"))
+                .unwrap()
+                .allow_service_define
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -114,7 +114,7 @@ pub fn report_error(json: bool, e: &Error) {
 fn hint(e: &Error) -> Option<&'static str> {
     match e {
         Error::AuthRequired(_) => Some("sign the account in: hrdctl account login NAME"),
-        Error::Denied(_) => Some("this needs a different user (root for network and install steps, a member of the cordial group otherwise)"),
+        Error::Denied(_) => Some("this needs a different user (root for proxy and install steps, a member of the cordial group otherwise)"),
         _ => None,
     }
 }

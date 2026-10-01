@@ -2,6 +2,9 @@
 set -e
 case "$1" in
 remove|deconfigure)
+    # The panel only talks to the daemon, and would keep its port with its program
+    # gone, so it goes first.
+    systemctl stop hrd-panel >/dev/null 2>&1 || true
     # Stopping the daemon leaves the clients running (KillMode=process); say so.
     if systemctl is-active --quiet hrdd 2>/dev/null; then
         echo "hrd: stopping hrdd. Running clients are NOT stopped; use 'hrdctl stop-all' first if you want them gone."

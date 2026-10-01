@@ -241,6 +241,63 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
         .split(v)[1]
 }
 
+const HEADS: [&str; 10] = [
+    "ID",
+    "STATE",
+    "GROUP",
+    "PROXY GROUP",
+    "PLACE",
+    "UP",
+    "RSS MiB",
+    "PSS MiB",
+    "CPU%",
+    "WHY",
+];
+
+/// One row's cells, in the order of [`HEADS`].
+fn row_cells(i: &InstanceView) -> Vec<String> {
+    let m = i.mem.clone().unwrap_or_default();
+    vec![
+        i.id.to_string(),
+        i.state.to_string(),
+        opt(&i.group),
+        opt(&i.proxy_group),
+        opt(&i.place_id),
+        age(i.uptime_s),
+        mib(m.rss_bytes),
+        mib(m.pss_bytes),
+        pct(i.cpu_percent),
+        i.reason.clone().unwrap_or_default(),
+    ]
+}
+
+/// Which columns to show and how wide each is, for a table `room` characters
+/// wide. Widths come from the data, because names go up to 24 characters; the
+/// last column (WHY) takes what is left, and the least useful columns drop out
+/// when that would be under 20 characters.
+fn layout(cells: &[Vec<String>], room: usize) -> (Vec<usize>, [u16; 9]) {
+    let caps: [usize; 9] = [24, 13, 24, 24, 14, 8, 8, 8, 5];
+    let mut width = [0u16; 9];
+    for (c, w) in width.iter_mut().enumerate() {
+        let longest = cells
+            .iter()
+            .map(|r| r[c].chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(HEADS[c].chars().count());
+        *w = longest.min(caps[c]) as u16;
+    }
+    let mut shown: Vec<usize> = (0..9).collect();
+    let need = |shown: &[usize]| shown.iter().map(|&c| width[c] as usize + 1).sum::<usize>() + 20;
+    for drop in [5usize, 7, 6, 4] {
+        if need(&shown) <= room {
+            break;
+        }
+        shown.retain(|&c| c != drop);
+    }
+    (shown, width)
+}
+
 fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let parts = Layout::default()
@@ -291,51 +348,34 @@ fn draw(f: &mut Frame, app: &mut App) {
         parts[0],
     );
 
-    let header = Row::new([
-        "ID",
-        "STATE",
-        "GROUP",
-        "PROXY GROUP",
-        "PLACE",
-        "UP",
-        "RSS MiB",
-        "PSS MiB",
-        "CPU%",
-        "WHY",
-    ])
+    let cells: Vec<Vec<String>> = app.rows.iter().map(row_cells).collect();
+    let (shown, width) = layout(&cells, parts[1].width.saturating_sub(2) as usize);
+    let header = Row::new(
+        shown
+            .iter()
+            .map(|&c| HEADS[c])
+            .chain(std::iter::once(HEADS[9])),
+    )
     .style(Style::default().add_modifier(Modifier::BOLD));
     let rows: Vec<Row> = app
         .rows
         .iter()
-        .map(|i| {
-            let m = i.mem.clone().unwrap_or_default();
-            Row::new(vec![
-                i.id.to_string(),
-                i.state.to_string(),
-                opt(&i.group),
-                opt(&i.proxy_group),
-                opt(&i.place_id),
-                age(i.uptime_s),
-                mib(m.rss_bytes),
-                mib(m.pss_bytes),
-                pct(i.cpu_percent),
-                i.reason.clone().unwrap_or_default(),
-            ])
+        .zip(&cells)
+        .map(|(i, r)| {
+            Row::new(
+                shown
+                    .iter()
+                    .map(|&c| r[c].clone())
+                    .chain(std::iter::once(r[9].clone())),
+            )
             .style(state_style(i.state))
         })
         .collect();
-    let widths = [
-        Constraint::Length(20),
-        Constraint::Length(13),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(5),
-        Constraint::Fill(1),
-    ];
+    let widths: Vec<Constraint> = shown
+        .iter()
+        .map(|&c| Constraint::Length(width[c]))
+        .chain(std::iter::once(Constraint::Fill(1)))
+        .collect();
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -356,7 +396,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Help => {
             let r = centered(area, 70, 14);
             f.render_widget(Clear, r);
-            let text = "The panel only talks to the daemon. Leaving it stops nothing.\n\nx  stop the selected client (asks first)\nX  stop every client (asks first)\nf  cycle the state filter\na  show only live instances\nEnter  details of the selected instance\nl  its last 200 log lines (credentials scrubbed)\n\nStarting, signing in and network changes are done with hrdctl.";
+            let text = "The panel only talks to the daemon. Leaving it stops nothing.\n\nx  stop the selected client (asks first)\nX  stop every client (asks first)\nf  cycle the state filter\na  show only live instances\nEnter  details of the selected instance\nl  its last 200 log lines (credentials scrubbed)\n\nStarting, signing in and proxy changes are done with hrdctl.";
             f.render_widget(
                 Paragraph::new(text)
                     .wrap(Wrap { trim: false })
@@ -491,4 +531,64 @@ pub fn run(ctx: &Ctx) -> Result<()> {
     let r = event_loop(&mut term, &mut app);
     ratatui::restore();
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cells(id: &str, group: &str, proxy_group: &str, why: &str) -> Vec<String> {
+        [
+            id,
+            "failed",
+            group,
+            proxy_group,
+            "920587237",
+            "-",
+            "-",
+            "-",
+            "-",
+            why,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn long_names_get_their_full_width() {
+        let rows = vec![cells(
+            "an-account-with-24-chars",
+            "adopt-me-eu-west-extra-1",
+            "de-frankfurt-1-second-pg",
+            "gone",
+        )];
+        let (shown, width) = layout(&rows, 200);
+        assert_eq!(shown.len(), 9, "everything fits in 200 columns");
+        assert_eq!(width[0], 24);
+        assert_eq!(width[2], 24);
+        assert_eq!(width[3], 24);
+    }
+
+    #[test]
+    fn a_narrow_terminal_drops_columns_before_squeezing_why() {
+        let rows = vec![cells("alt-01", "adopt-me", "de-1", "the client exited")];
+        let (wide, _) = layout(&rows, 120);
+        assert_eq!(wide.len(), 9);
+        let (narrow, width) = layout(&rows, 70);
+        assert!(narrow.len() < 9, "something was dropped");
+        assert!(!narrow.contains(&5), "UP goes first");
+        let used: usize = narrow.iter().map(|&c| width[c] as usize + 1).sum();
+        assert!(
+            used + 20 <= 70 || narrow.len() == 5,
+            "WHY keeps 20 or nothing more can go"
+        );
+    }
+
+    #[test]
+    fn no_rows_still_lays_out() {
+        let (shown, width) = layout(&[], 80);
+        assert!(!shown.is_empty());
+        assert_eq!(width[0], 2, "the ID header");
+    }
 }
