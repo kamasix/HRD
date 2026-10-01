@@ -70,7 +70,8 @@ that shape is upgraded when the daemon loads it: each old group becomes a group 
 the same name holding one proxy group of the same name, so the names the operator
 knows and the namespaces the helper already built stay valid. No place is set,
 because schema 1 never stored one. The old file is kept beside the new one as
-`registry.json.schema1`. A registry whose relations do not hold (an account in a
+`registry.json.schema1` (an existing backup is never replaced; the next one is
+`.schema1.1`). A registry whose relations do not hold (an account in a
 proxy group that is not there) or whose schema is newer than the daemon is refused,
 not guessed at. Records of runs written before the split, and account exports that
 say `group`, still read.

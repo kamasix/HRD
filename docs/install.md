@@ -164,8 +164,10 @@ accounts, and the place was typed at every start) is upgraded the first time the
 daemon starts: each old group becomes a group of the same name with one proxy group
 of the same name, in which its accounts and its network stay. No place is set, so
 type one into each group (panel, or `hrdctl group set NAME --place-id N`) before
-starting it. The old file is kept as `/var/lib/cordial-hrd/registry.json.schema1`;
-keep it if you may go back to the older daemon, which cannot read the new one.
+starting it. The old file is kept as `/var/lib/cordial-hrd/registry.json.schema1`
+(never replaced: if you go back to the older daemon and upgrade again, the file that
+upgrade replaced is kept as `.schema1.1`); keep it if you may go back to the older
+daemon, which cannot read the new one.
 Merge groups afterwards by moving proxy groups (`hrdctl proxy-group set NAME --group
 OTHER`, or the proxy group's settings in the panel).
 
