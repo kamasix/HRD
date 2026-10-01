@@ -186,14 +186,14 @@ pub enum Effect {
 pub fn is_live_section(sec: &str) -> bool {
     matches!(
         sec,
-        "scheduler" | "stats" | "network" | "logs" | "login" | "resources" | "engine"
+        "scheduler" | "stats" | "network" | "logs" | "login" | "resources" | "engine" | "runtime"
     )
 }
 
 /// When a change to `key` takes hold.
 pub fn effect_of(key: &str) -> Effect {
     match key.split('.').next().unwrap_or("") {
-        "scheduler" | "stats" | "network" | "logs" | "login" => Effect::Live,
+        "scheduler" | "stats" | "network" | "logs" | "login" | "runtime" => Effect::Live,
         "resources" | "engine" => Effect::NextStart,
         _ => Effect::Restart,
     }

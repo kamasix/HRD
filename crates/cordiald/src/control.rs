@@ -335,6 +335,11 @@ fn dispatch(d: &Arc<Daemon>, conn: &mut Conn, req: Request) -> Result<Value> {
         }
         RuntimeList => oi::runtime_list(d),
         RuntimeUse { version } => oi::runtime_use(d, version),
+        RuntimeUpdateStatus => or::to(&crate::updater::view(d)),
+        RuntimeUpdateNow => {
+            d.update_now.store(true, Ordering::Relaxed);
+            or::to(&crate::updater::view(d))
+        }
         RuntimeRemove { version } => oi::runtime_remove(d, version),
         ConfigGet => or::config_get(d),
         ConfigSet { changes } => or::config_set(d, changes),

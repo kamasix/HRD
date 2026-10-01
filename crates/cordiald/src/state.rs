@@ -145,6 +145,9 @@ pub struct Daemon {
     pub samples: Mutex<crate::sampler::Samples>,
     pub secrets: crate::secrets::Secrets,
     pub notes: Mutex<Vec<String>>,
+    pub update: Mutex<hrd_core::proto::UpdateView>,
+    /// Set to ask the updater thread to check now.
+    pub update_now: AtomicBool,
 }
 
 impl Daemon {

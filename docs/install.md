@@ -50,6 +50,15 @@ cordialctl runtime fetch             # newest; or --version NAME
 cordialctl runtime list
 ```
 
+Keep it current: `cordialctl config set runtime.auto_update true` (or the toggle in the
+panel's Ustawienia > Roblox). Every `runtime.check_interval_h` hours (default 6) the
+daemon asks the mirror for the newest x86-64 build and, if it is newer than the
+newest installed one, downloads, verifies and installs it and selects it for
+clients started afterwards; running clients are never touched. `cordialctl runtime
+update [--now]` shows the state or checks at once. It is off by default because it
+makes the daemon send network requests. If a new build misbehaves,
+`cordialctl runtime use OLDER_VERSION` goes back.
+
 This runs upstream Cordial's own downloader (mirror: APKPure, x86-64 only), checks
 every file against Roblox's pinned signing certificate, then installs it with the
 same checks as `import`. Nothing is installed unless all of it passes. The

@@ -23,6 +23,7 @@ usage:
   cordial-import remove --store DIR VERSION [--in-use VERSION]...
   cordial-import verify --store DIR [VERSION] [--json]
   cordial-import fetch  --into DIR [--version NAME] [--list]
+  cordial-import fetch  --check --store DIR   (is the mirror's newest build newer than the current one?)
 
 `fetch` downloads the x86-64 Roblox build from the mirror upstream Cordial uses
 (APKPure) into DIR and checks each file against Roblox's pinned signing
@@ -48,6 +49,7 @@ struct Args {
     into: Option<PathBuf>,
     version: Option<String>,
     list: bool,
+    check: bool,
     positional: Vec<String>,
 }
 
@@ -67,6 +69,7 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
         into: None,
         version: None,
         list: false,
+        check: false,
         positional: vec![],
     };
     while let Some(arg) = it.next() {
@@ -101,6 +104,7 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
             "--into" => a.into = Some(PathBuf::from(value("--into")?)),
             "--version" => a.version = Some(value("--version")?),
             "--list" => a.list = true,
+            "--check" => a.check = true,
             "--in-use" => a.in_use.push(value("--in-use")?),
             "-h" | "--help" => return Err(String::new()),
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -172,7 +176,54 @@ fn expand_inputs(a: &Args) -> Result<Vec<Input>> {
     Ok(out)
 }
 
+/// `2.738.0.1397` (the engine's name for a build) and `2.738.1397` (the
+/// mirror's) name the same build: compare on major, minor and build.
+fn build_key(v: &str) -> Option<(u64, u64, u64)> {
+    let n: Vec<u64> = v
+        .split('.')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    match n.as_slice() {
+        [a, b, c] => Some((*a, *b, *c)),
+        [a, b, _, d] => Some((*a, *b, *d)),
+        _ => None,
+    }
+}
+
+fn check(a: &Args) -> Result<()> {
+    use cordial_update::provider::mirror;
+    let store = Store::new(
+        a.store
+            .clone()
+            .ok_or_else(|| Error::invalid("--check needs --store DIR"))?,
+    );
+    let offered = mirror::offered().map_err(|e| Error::unavailable(e.to_string()))?;
+    let newest = offered
+        .iter()
+        .max_by_key(|v| build_key(&v.name))
+        .ok_or_else(|| Error::unavailable("the mirror lists no versions"))?;
+    let installed: Vec<String> = store.list().into_iter().map(|b| b.version).collect();
+    let have = installed.iter().filter_map(|v| build_key(v)).max();
+    let newer = match (build_key(&newest.name), have) {
+        (Some(n), Some(h)) => n > h,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    println!(
+        "{}",
+        serde_json::json!({
+            "newest": newest.name,
+            "current": store.current(),
+            "newer": newer,
+        })
+    );
+    Ok(())
+}
+
 fn fetch(a: &Args) -> Result<()> {
+    if a.check {
+        return check(a);
+    }
     use cordial_update::provider::{self, mirror, Cancel, Progress, Provider, Want};
     let unreachable = |e: cordial_update::Unreachable| Error::unavailable(e.to_string());
     if a.list {
@@ -410,5 +461,18 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(e.exit_code())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_key;
+
+    #[test]
+    fn the_engines_name_and_the_mirrors_name_for_a_build_compare_equal() {
+        assert_eq!(build_key("2.738.0.1397"), build_key("2.738.1397"));
+        assert!(build_key("2.738.1397") > build_key("2.734.917"));
+        assert!(build_key("2.738.1397") > build_key("2.738.1393"));
+        assert_eq!(build_key("garbage"), None);
     }
 }

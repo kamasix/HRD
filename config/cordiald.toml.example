@@ -137,3 +137,14 @@ timeout_s = 900
 # action per command, to type a password or a code. Only sign-in clients have it.
 console = true
 max_text_len = 256
+
+[runtime]
+# Keep the Roblox build current. Off: the daemon makes no network request of its
+# own. On: every check_interval_h hours it asks the mirror upstream Cordial uses
+# (APKPure, x86-64 only) for the newest version; if that is newer than the
+# installed one it downloads it, checks Roblox's signing certificate, installs
+# it, and (make_current) selects it for clients started from then on. Running
+# clients are never touched. To go back: `cordialctl runtime use VERSION`.
+auto_update = false
+check_interval_h = 6
+make_current = true

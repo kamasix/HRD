@@ -1,5 +1,13 @@
 # The web panel (optional)
 
+Two pages. **Konta** (accounts): one card per account with its state, memory and CPU
+and one main button (Start, Stop or Zaloguj depending on the state), a Place ID
+field that is remembered in your browser, and "Zatrzymaj wszystko". **Ustawienia**
+(settings): Roblox (installed versions, automatic updates, check now, install from
+APK files), the secret store, groups and networks, and an advanced section with
+the doctor and every daemon setting. The page is in Polish. Everything it does is
+also a `cordialctl` command (see operations.md).
+
 The panel lets you do from a browser what `cordialctl` does: fleet status and
 statistics, accounts and the sign-in screen, groups, networks (listing, applying; defining a WireGuard
 network needs root and is done with `sudo cordialctl network add`), the Roblox runtime (including uploading an APK),

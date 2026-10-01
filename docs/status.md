@@ -29,6 +29,7 @@ evidence that a session works.
 | Stats (RSS/PSS/USS/swap/CPU/cgroup/disk/traffic) | implemented; parsing tested; sampled in the sandbox | values for a real client unknown |
 | CLI | implemented | all requested commands; `--json`, exit codes, filters |
 | Terminal panel | implemented; started in a pty | |
+| Automatic Roblox update (`runtime.auto_update`) | implemented; check/compare logic and the daemon thread compile and are exercised up to the network call | **unverified**: a real update cycle (the sandbox cannot reach the mirror); a new Roblox build can need stubs upstream has not got yet - then `runtime use` the older one |
 | Web panel | implemented; exercised over TLS with curl and in headless Chromium | not reviewed by a third party |
 | Upstream patches | implemented; compile-checked, built, asset patch tested | **unverified** in a running client |
 | Resource modes | implemented as environment lists, tested | effect on memory **unmeasured** |

@@ -32,6 +32,7 @@ pub struct Config {
     pub network: NetworkCfg,
     pub logs: LogsCfg,
     pub login: LoginCfg,
+    pub runtime: RuntimeCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +332,34 @@ impl Default for SecretsCfg {
     }
 }
 
+/// Keeping the Roblox build up to date.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RuntimeCfg {
+    /// Look for a newer x86-64 Roblox build from time to time, download it,
+    /// check it against Roblox's pinned signing certificate and install it.
+    /// Off by default: the daemon makes no network request of its own until you
+    /// turn this on. Running clients keep the build they started with; only
+    /// clients started afterwards use the new one.
+    pub auto_update: bool,
+    /// Hours between checks. A check is one small request; a download happens
+    /// only when the mirror has a newer build than the installed one.
+    pub check_interval_h: u64,
+    /// Select the new build for future starts once it is installed. Off: it is
+    /// installed and `runtime use VERSION` (or the panel) selects it.
+    pub make_current: bool,
+}
+
+impl Default for RuntimeCfg {
+    fn default() -> Self {
+        RuntimeCfg {
+            auto_update: false,
+            check_interval_h: 6,
+            make_current: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct NetworkCfg {
@@ -429,6 +458,12 @@ impl Config {
     /// Every problem, not just the first, so one edit fixes them all.
     pub fn problems(&self) -> Vec<String> {
         let mut p = Vec::new();
+        if !(1..=24 * 30).contains(&self.runtime.check_interval_h) {
+            p.push(format!(
+                "runtime.check_interval_h = {} is outside 1..=720",
+                self.runtime.check_interval_h
+            ));
+        }
         let s = &self.scheduler;
         if s.max_instances == 0 || s.max_instances > 10_000 {
             p.push(format!(

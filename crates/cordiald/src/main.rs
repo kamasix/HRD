@@ -23,6 +23,7 @@ mod signals;
 mod spawn;
 mod state;
 mod supervisor;
+mod updater;
 mod views;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -190,6 +191,8 @@ fn run(args: Args, layout: Layout) -> Result<()> {
         online_cpus: online,
         samples: Mutex::new(Default::default()),
         notes: Mutex::new(Vec::new()),
+        update: Mutex::new(Default::default()),
+        update_now: AtomicBool::new(false),
     });
     for n in notes {
         d.note(n);
@@ -215,6 +218,7 @@ fn run(args: Args, layout: Layout) -> Result<()> {
             .ok();
     }
     supervisor::spawn_net_refresh(d.clone());
+    updater::spawn_thread(d.clone());
     eprintln!(
         "<6>cordiald: listening on {}",
         layout.control_socket().display()

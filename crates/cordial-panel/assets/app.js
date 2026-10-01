@@ -1,8 +1,11 @@
 'use strict';
-// The panel page. Talks only to this origin; builds the DOM with textContent
-// (never innerHTML), so nothing it shows can inject markup or script.
+// The panel page. It talks only to this origin and builds the DOM with
+// textContent / createElement (never innerHTML), so nothing it shows can inject
+// markup or script. Everything here is a view over the same commands as cordialctl.
 
 const $ = (s, r = document) => r.querySelector(s);
+const SVGNS = 'http://www.w3.org/2000/svg';
+
 function h(tag, props, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -19,6 +22,30 @@ function h(tag, props, ...kids) {
   return e;
 }
 
+const ICONS = {
+  play: 'M8 5v14l11-7z',
+  stop: 'M6 6h12v12H6z',
+  key: 'M7 14a4 4 0 1 1 3.9-5H21v3h-2v2h-3v-2h-5.1A4 4 0 0 1 7 14zm0-2.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
+  gear: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 4-2.1-.7a7 7 0 0 0-.6-1.4l1-2-2-2-2 1a7 7 0 0 0-1.4-.6L13 3h-2l-.7 2.1a7 7 0 0 0-1.4.6l-2-1-2 2 1 2a7 7 0 0 0-.6 1.4L3 11v2l2.1.7c.1.5.3 1 .6 1.4l-1 2 2 2 2-1c.4.3.9.5 1.4.6L11 21h2l.7-2.1c.5-.1 1-.3 1.4-.6l2 1 2-2-1-2c.3-.4.5-.9.6-1.4L21 13z',
+  net: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 2c.9 0 2 1.7 2.5 4h-5C10 6.7 11.1 5 12 5zM5.3 11a7 7 0 0 1 2.3-4.5C7.2 7.4 7 9 7 11zm0 2h1.7c0 2 .2 3.6.6 4.5A7 7 0 0 1 5.3 13z',
+  lock: 'M7 10V8a5 5 0 0 1 10 0v2h1v10H6V10zm2 0h6V8a3 3 0 0 0-6 0z',
+  cube: 'M12 2 3 7v10l9 5 9-5V7zm0 2.2 6.5 3.6L12 11.4 5.5 7.8zM5 9.6l6 3.4v6.8l-6-3.3z',
+  doc: 'M6 3h9l4 4v14H6zm8 1.5V8h3.5zM8 12h8v1.5H8zm0 3h8v1.5H8z',
+  plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
+  dots: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
+};
+function icon(name) {
+  const s = document.createElementNS(SVGNS, 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('fill', 'currentColor');
+  s.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(SVGNS, 'path');
+  p.setAttribute('d', ICONS[name]);
+  s.append(p);
+  return s;
+}
+const btn = (label, cls, fn, ic) => h('button', { class: cls || '', on: { click: fn } }, ic ? icon(ic) : null, label);
+
 let csrf = null;
 let timer = null;
 
@@ -27,193 +54,281 @@ function toast(msg, bad) {
   $('#toast').append(d);
   setTimeout(() => d.remove(), bad ? 9000 : 4000);
 }
-
 async function raw(path, opts) {
   const r = await fetch(path, { credentials: 'same-origin', ...opts });
   let j = null;
   try { j = await r.json(); } catch (_) { /* not JSON */ }
-  if (r.status === 401 && path !== '/api/login') { csrf = null; showLogin(); throw new Error('sign in'); }
+  if (r.status === 401 && path !== '/api/login') { csrf = null; showLogin(); throw new Error('Zaloguj się ponownie'); }
   if (!j || j.ok === false) throw new Error(j && j.error ? j.error.message : 'HTTP ' + r.status);
   return j.data;
 }
-function call(cmd, args) {
-  const body = args === undefined ? { cmd } : { cmd, args };
-  return raw('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF': csrf }, body: JSON.stringify(body) });
-}
-function post(path, body) {
-  return raw(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF': csrf }, body: JSON.stringify(body) });
-}
+const hdr = () => ({ 'Content-Type': 'application/json', 'X-CSRF': csrf });
+const call = (cmd, args) => raw('/api/call', { method: 'POST', headers: hdr(), body: JSON.stringify(args === undefined ? { cmd } : { cmd, args }) });
+const post = (path, body) => raw(path, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
 async function act(fn, okMsg) {
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { toast(e.message, true); return undefined; }
 }
 
-const mib = (b) => (b == null ? '-' : (b / 1048576).toFixed(1));
-const pct = (v) => (v == null ? '-' : Math.round(v));
+const mib = (b) => (b == null ? '–' : Math.round(b / 1048576));
+const gib = (b) => (b == null ? '–' : (b / 1073741824).toFixed(1));
 function age(s) {
-  if (s == null) return '-';
-  if (s < 60) return s + 's';
-  if (s < 3600) return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
-  return Math.floor(s / 3600) + 'h' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm';
+  if (s == null) return '–';
+  if (s < 60) return s + ' s';
+  if (s < 3600) return Math.floor(s / 60) + ' min';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
+  return Math.floor(s / 86400) + ' d ' + Math.floor((s % 86400) / 3600) + ' h';
 }
-const when = (t) => (t ? new Date(t * 1000).toLocaleString() : '-');
-const tag = (s) => h('span', { class: 'tag s-' + s }, String(s).replace(/_/g, ' '));
-const orDash = (v) => (v == null || v === '' ? '-' : v);
+const when = (t) => (t ? new Date(t * 1000).toLocaleString('pl-PL') : '–');
+const orDash = (v) => (v == null || v === '' ? '–' : v);
 
-function table(head, rows, numeric) {
-  const num = new Set(numeric || []);
-  return h('div', { class: 'scroll' }, h('table', {},
-    h('thead', {}, h('tr', {}, head.map((t, i) => h('th', { class: num.has(i) ? 'num' : '' }, t)))),
-    h('tbody', {}, rows.map((r) => h('tr', {}, r.map((c, i) => h('td', { class: num.has(i) ? 'num' : '' }, c)))))));
+const STATE = {
+  connected: ['Połączony', 't-ok'], starting: ['Uruchamianie', 't-warn'], joining: ['Wchodzi do gry', 't-warn'], queued: ['W kolejce', 't-warn'],
+  disconnected: ['Rozłączony', 't-violet'], stopped: ['Zatrzymany', 't-off'], failed: ['Błąd', 't-bad'], auth_required: ['Wymaga logowania', 't-bad'],
+  unknown: ['Nieznany', 't-info'], configured: ['Gotowy', 't-off'],
+};
+function pill(state) {
+  const [label, cls] = STATE[state] || [String(state).replace(/_/g, ' '), 't-off'];
+  return h('span', { class: 'pill ' + cls }, label);
+}
+const LIVE = ['queued', 'starting', 'joining', 'connected', 'unknown'];
+
+// ------------------------------------------------------------------ modal
+
+function modal(title, ...body) {
+  const root = $('#modal-root');
+  const close = () => { root.replaceChildren(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  const veil = h('div', { class: 'veil', on: { mousedown: (e) => { if (e.target === veil) close(); } } },
+    h('div', { class: 'modal', role: 'dialog', 'aria-label': title },
+      h('div', { class: 'mh' }, h('h2', {}, title), h('button', { class: 'ghost sm', on: { click: close } }, 'Zamknij')), ...body));
+  root.replaceChildren(veil);
+  return close;
+}
+function ask(title, text, okLabel, danger) {
+  return new Promise((resolve) => {
+    const close = modal(title, h('p', { class: 'muted' }, text),
+      h('div', { class: 'row' },
+        btn(okLabel, danger ? 'danger' : 'primary', () => { close(); resolve(true); }),
+        btn('Anuluj', 'ghost', () => { close(); resolve(false); })));
+  });
 }
 
 // ------------------------------------------------------------------ frame
 
-const NAV = [['status', 'Fleet'], ['accounts', 'Accounts'], ['groups', 'Groups'], ['networks', 'Networks'], ['runtime', 'Runtime'], ['settings', 'Settings'], ['secrets', 'Secrets'], ['doctor', 'Doctor']];
-
 function renderTop(active) {
-  const top = $('#top');
-  top.replaceChildren(
-    h('span', { class: 'brand' }, 'Cordial fleet'),
-    h('nav', {}, NAV.map(([k, t]) => h('a', { href: '#/' + k, class: active === k ? 'on' : '' }, t))),
-    h('span', { class: 'sp' }),
-    h('button', { on: { click: async () => { await act(() => raw('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF': csrf }, body: '{}' })); csrf = null; showLogin(); } } }, 'Sign out'));
+  $('#app').replaceChildren(
+    h('header', { class: 'top' },
+      h('div', { class: 'logo' }, h('i'), 'Cordial'),
+      h('nav', { class: 'tabs' },
+        h('a', { href: '#/', class: active === 'home' ? 'on' : '' }, 'Konta'),
+        h('a', { href: '#/settings', class: active === 'settings' ? 'on' : '' }, 'Ustawienia')),
+      h('span', { class: 'sp' }),
+      h('button', { class: 'ghost sm', on: { click: async () => { await act(() => raw('/api/logout', { method: 'POST', headers: hdr(), body: '{}' })); csrf = null; showLogin(); } } }, 'Wyloguj')),
+    h('main', { id: 'main' }));
+  return $('#main');
 }
 
 function showLogin() {
   clearInterval(timer);
-  $('#top').replaceChildren();
-  const tok = h('input', { type: 'password', autocomplete: 'off', placeholder: 'login token', required: true });
-  const form = h('form', { class: 'card login-box', on: { submit: async (ev) => {
+  const tok = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Token logowania', required: true });
+  const form = h('form', { class: 'card', on: { submit: async (ev) => {
     ev.preventDefault();
     try {
       const r = await raw('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok.value }) });
       csrf = r.csrf; tok.value = ''; route();
     } catch (e) { toast(e.message, true); }
   } } },
-    h('h1', {}, 'Cordial fleet'),
-    h('p', { class: 'muted' }, 'Enter the login token that cordial-panel init showed.'),
-    h('label', { class: 'block' }, 'Token', tok),
-    h('div', { class: 'row' }, h('button', { class: 'primary', type: 'submit' }, 'Sign in')));
-  $('#main').replaceChildren(form);
+    h('label', { class: 'field' }, 'Token', tok),
+    h('button', { class: 'primary', type: 'submit' }, 'Zaloguj'));
+  $('#app').replaceChildren(h('div', { class: 'loginwrap' }, h('div', { class: 'login' },
+    h('div', { class: 'logo' }, h('i'), 'Cordial'),
+    h('p', { class: 'muted' }, 'Wpisz token, który wypisało „cordial-panel init”.'), form)));
+  $('#modal-root').replaceChildren();
   tok.focus();
 }
 
-// ------------------------------------------------------------------ fleet
+// ------------------------------------------------------------------ home
 
-async function viewStatus(root, state) {
-  const stateSel = h('select', {}, h('option', { value: '' }, 'all states'),
-    ['queued', 'starting', 'joining', 'connected', 'disconnected', 'stopped', 'failed', 'auth_required', 'unknown', 'configured'].map((s) => h('option', { value: s }, s)));
-  const groupIn = h('input', { placeholder: 'group', size: 10 });
-  const find = h('input', { placeholder: 'find account', size: 14 });
-  const place = h('input', { placeholder: 'place id', size: 12, value: localStorage.getItem('place') || '' });
-  const out = h('div');
-  root.replaceChildren(h('h1', {}, 'Fleet'), h('div', { class: 'row' }, stateSel, groupIn, find), out);
+async function viewHome(root) {
+  let place = localStorage.getItem('place') || '';
+  const placeIn = h('input', { placeholder: 'Place ID gry', inputmode: 'numeric', value: place, 'aria-label': 'Place ID' });
+  placeIn.addEventListener('input', () => { place = placeIn.value.trim(); try { localStorage.setItem('place', place); } catch (_) { /* private mode */ } });
+  const statsBox = h('div', { class: 'stats' });
+  const cardsBox = h('div', { class: 'cards' });
+  const updBadge = h('span');
+
+  root.replaceChildren(
+    h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Konta'), h('p', { class: 'sub' }, 'Uruchamiaj, zatrzymuj i sprawdzaj swoje konta.')),
+      btn('Dodaj konto', 'primary', addAccountModal, 'plus')),
+    statsBox,
+    h('div', { class: 'card startbar' },
+      h('b', {}, 'Place ID'), placeIn,
+      h('span', { class: 'hint grow' }, 'Użyj go przy każdym „Start”. Pamiętany w tej przeglądarce.'),
+      btn('Zatrzymaj wszystko', 'danger', async () => {
+        if (await ask('Zatrzymać wszystkie?', 'Wszystkie klienty zostaną zatrzymane, a kolejka wyczyszczona.', 'Zatrzymaj wszystko', true)) { await act(() => call('stop_all', { force: false }), 'Zatrzymuję wszystko'); refresh(); }
+      }, 'stop')),
+    cardsBox);
+
+  function statCard(k, v, unit, frac) {
+    return h('div', { class: 'stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v, unit ? h('small', {}, unit) : null),
+      frac != null ? h('div', { class: 'bar' }, (() => { const i = h('i'); i.style.width = Math.max(2, Math.min(100, frac * 100)) + '%'; return i; })()) : null);
+  }
+
+  async function startAccount(a) {
+    if (!place) { placeIn.focus(); toast('Wpisz najpierw Place ID gry', true); return; }
+    if (!/^[0-9]+$/.test(place)) { toast('Place ID to same cyfry', true); return; }
+    const r = await act(() => call('instance_start', { account: a.id, place_id: Number(place), group: null, private_server_code: null, mode: null }), a.id + ': w kolejce');
+    if (r) refresh();
+  }
+
+  // One card per account, updated in place so that a refresh never replaces a
+  // button under the pointer (a click would be lost) or resets scrolling.
+  const cardMap = new Map();
+  function makeCard(first) {
+    let cur = first;
+    let kind = null;
+    const nameEl = h('div', { class: 'name grow', title: first.id }, first.id);
+    const pillSlot = h('span');
+    const mUp = h('b'), mMem = h('b'), mCpu = h('b');
+    const why = h('div', { class: 'why' });
+    const actions = h('div', { class: 'actions' });
+    const more = btn('Więcej', 'sm', () => accountMenu(cur, needsLogin(cur), refresh), 'dots');
+    const el = h('div', { class: 'acct' },
+      h('div', { class: 'top2' }, nameEl, pillSlot),
+      h('div', { class: 'meta' }, h('div', {}, mUp, h('span', {}, 'działa')), h('div', {}, mMem, h('span', {}, 'pamięć')), h('div', {}, mCpu, h('span', {}, 'procesor'))),
+      why, actions);
+    const needsLogin = (x) => x.auth === 'none' || x.auth === 'required' || x.state === 'auth_required';
+    function update(a) {
+      cur = a;
+      const m = a.mem || {};
+      const live = LIVE.includes(a.state);
+      pillSlot.replaceChildren(pill(a.state));
+      mUp.textContent = live ? age(a.uptime_s) : '–';
+      mMem.textContent = m.pss_bytes != null ? mib(m.pss_bytes) + ' MB' : m.rss_bytes != null ? mib(m.rss_bytes) + ' MB' : '–';
+      mCpu.textContent = a.cpu_percent != null ? Math.round(a.cpu_percent) + '%' : '–';
+      why.textContent = a.reason || (a.group ? 'Grupa: ' + a.group : '');
+      const k = live ? 'stop' : needsLogin(a) ? 'login' : 'start';
+      if (k !== kind) {
+        kind = k;
+        const primary = k === 'stop'
+          ? btn('Stop', 'danger grow', async () => { await act(() => call('instance_stop', { id: cur.id, force: false }), cur.id + ': zatrzymuję'); refresh(); }, 'stop')
+          : k === 'login'
+            ? btn('Zaloguj', 'primary grow', () => { location.hash = '#/login/' + cur.id; }, 'key')
+            : btn('Start', 'primary grow', () => startAccount(cur), 'play');
+        actions.replaceChildren(primary, more);
+      }
+    }
+    update(first);
+    return { el, update };
+  }
 
   async function refresh() {
     let stats, rows;
     try {
-      const f = { states: stateSel.value ? [stateSel.value] : [], group: groupIn.value || null, label: null, accounts: [] };
-      [stats, rows] = await Promise.all([call('stats', { filter: {} }), call('status', { filter: f })]);
-    } catch (e) { out.replaceChildren(h('p', { class: 'muted' }, e.message)); return; }
-    const t = stats.total, e = stats.engines;
-    const tiles = [
-      ['instances', stats.instances], ['engine PSS MiB', mib(e.pss_bytes)], ['total PSS MiB', mib(t.pss_bytes)], ['total RSS MiB', mib(t.rss_bytes)],
-      ['CPU % (100 = 1 core)', pct(t.cpu_percent)], ['available MiB', mib(stats.mem_available_bytes)],
-      ['memory pressure', stats.memory_pressure_some_avg10 == null ? '-' : stats.memory_pressure_some_avg10.toFixed(1) + '%'], ['cgroup memory.current MiB', mib(stats.cgroup_current_bytes)],
-    ];
-    const q = find.value.trim().toLowerCase();
-    const shown = rows.filter((r) => !q || r.id.includes(q));
-    const counts = {};
-    rows.forEach((r) => { counts[r.state] = (counts[r.state] || 0) + 1; });
-    out.replaceChildren(
-      h('div', { class: 'grid' }, tiles.map(([k, v]) => h('div', { class: 'stat' }, h('b', {}, v), h('span', {}, k)))),
-      h('p', { class: 'muted' }, Object.entries(counts).map(([k, v]) => v + ' ' + k).join(' · ') || 'no instances', '. "-" means not measured. RSS counts shared pages in every process; PSS does not.'),
-      h('div', { class: 'row' }, h('span', {}, 'Start group'), place, h('span', { class: 'muted' }, 'use the Groups page to queue a group; stop everything:'),
-        h('button', { class: 'danger', on: { click: async () => { if (confirm('Stop every client and cancel the queue?')) { await act(() => call('stop_all', { force: false }), 'stopping all'); refresh(); } } } }, 'Stop all')),
-      table(['Account', 'State', 'Group', 'Place', 'Up', 'RSS', 'PSS', 'CPU%', 'Why', ''], shown.map((r) => {
-        const m = r.mem || {};
-        return [r.id, tag(r.state), orDash(r.group), orDash(r.place_id), age(r.uptime_s), mib(m.rss_bytes), mib(m.pss_bytes), pct(r.cpu_percent), r.reason || '',
-          h('span', { class: 'row' },
-            h('button', { on: { click: () => showDetail(r.id) } }, 'Details'),
-            h('button', { on: { click: () => showLogs(r.id) } }, 'Log'),
-            ['queued', 'starting', 'joining', 'connected', 'unknown'].includes(r.state) ? h('button', { class: 'danger', on: { click: async () => { await act(() => call('instance_stop', { id: r.id, force: false }), r.id + ': stopping'); refresh(); } } }, 'Stop') : null)];
-      }), [5, 6, 7]));
+      [stats, rows] = await Promise.all([
+        call('stats', { filter: {} }),
+        call('status', { filter: { states: [], group: null, label: null, accounts: [] } }),
+      ]);
+    } catch (e) { cardsBox.replaceChildren(h('p', { class: 'muted' }, e.message)); return; }
+    const connected = rows.filter((r) => r.state === 'connected').length;
+    const running = rows.filter((r) => LIVE.includes(r.state)).length;
+    const avail = stats.mem_available_bytes;
+    statsBox.replaceChildren(
+      statCard('Połączone', connected, ' / ' + rows.length, rows.length ? connected / rows.length : 0),
+      statCard('Uruchomione', running, ' klientów', null),
+      statCard('Wolna pamięć', gib(avail), 'GB', null),
+      statCard('Procesor', stats.total.cpu_percent != null ? Math.round(stats.total.cpu_percent) : '–', stats.total.cpu_percent != null ? '%' : '', null));
+    if (!rows.length) {
+      cardMap.clear();
+      cardsBox.replaceChildren(h('div', { class: 'card empty' }, h('h2', {}, 'Nie ma jeszcze kont'), h('p', {}, 'Dodaj pierwsze konto, zaloguj je i uruchom.'),
+        h('div', { class: 'row' }, btn('Dodaj konto', 'primary', addAccountModal, 'plus'))));
+      return;
+    }
+    const seen = new Set();
+    const els = rows.map((r) => {
+      seen.add(r.id);
+      let c = cardMap.get(r.id);
+      if (!c) { c = makeCard(r); cardMap.set(r.id, c); } else c.update(r);
+      return c.el;
+    });
+    for (const id of [...cardMap.keys()]) if (!seen.has(id)) cardMap.delete(id);
+    // Re-attach only when the set or order changed.
+    const now = [...cardsBox.children];
+    if (now.length !== els.length || now.some((n, i) => n !== els[i])) cardsBox.replaceChildren(...els);
   }
-  [stateSel, groupIn, find].forEach((x) => x.addEventListener('input', refresh));
   await refresh();
   timer = setInterval(refresh, 3000);
 }
 
-function overlay(title, body) {
-  const box = h('div', { class: 'card' }, h('div', { class: 'row' }, h('h1', {}, title), h('button', { on: { click: () => box.remove() } }, 'Close')), body);
-  $('#main').prepend(box);
-  box.scrollIntoView();
+function addAccountModal() {
+  const names = h('textarea', { placeholder: 'konto-01\nkonto-02\n(jedno w linii; litery, cyfry i myślnik)' });
+  const close = modal('Dodaj konta',
+    h('p', { class: 'muted small' }, 'Dodajesz tylko profile swoich własnych kont. Logowanie robisz osobno, przyciskiem „Zaloguj”.'), names,
+    h('div', { class: 'row' }, btn('Dodaj', 'primary', async () => {
+      const list = names.value.split('\n').map((x) => x.trim()).filter(Boolean);
+      if (!list.length) { toast('Wpisz co najmniej jedną nazwę', true); return; }
+      let ok = 0;
+      for (const n of list) {
+        const r = await act(() => call('account_add', { name: n, labels: [], note: null, group: null }));
+        if (r) ok++;
+      }
+      if (ok) { toast('Dodano: ' + ok); close(); route(); }
+    })));
+  names.focus();
+}
+
+function accountMenu(a, needsLogin, refresh) {
+  const close = modal(a.id,
+    h('div', { class: 'row' }, pill(a.state), h('span', { class: 'muted small' }, 'sesja: ' + orDash(a.auth))),
+    h('div', { class: 'list' },
+      item('Szczegóły i procesy', 'Pamięć, sygnały z gry, ostatnie linie logu', () => { close(); showDetail(a.id); }),
+      item('Pełny log', 'Ostatnie 300 linii', () => { close(); showLogs(a.id); }),
+      item(needsLogin ? 'Zaloguj konto' : 'Zaloguj ponownie', 'Otwiera okno klienta logowania w przeglądarce', () => { close(); location.hash = '#/login/' + a.id; }),
+      item('Wyloguj (usuń zapisaną sesję)', 'Konto będzie musiało zalogować się od nowa', async () => {
+        close();
+        if (await ask('Wylogować ' + a.id + '?', 'Zapisana sesja zostanie skasowana.', 'Wyloguj', true)) { await act(() => call('account_logout', { name: a.id }), 'Wylogowano'); refresh(); }
+      }),
+      item('Usuń konto', 'Kasuje profil, log i zapisaną sesję', () => {
+        close();
+        const conf = h('input', { placeholder: 'Wpisz nazwę konta: ' + a.id });
+        const c2 = modal('Usunąć ' + a.id + '?', h('p', { class: 'muted' }, 'Tego nie da się cofnąć. Aby potwierdzić, wpisz nazwę konta.'), conf,
+          h('div', { class: 'row' }, btn('Usuń', 'danger', async () => { const r = await act(() => call('account_remove', { name: a.id, confirm: conf.value }), 'Usunięto'); if (r !== undefined) { c2(); route(); } }), btn('Anuluj', 'ghost', () => c2())));
+      })));
+}
+function item(title, sub, fn) {
+  return h('button', { class: 'item', on: { click: fn } }, h('span', { class: 'grow' }, h('b', {}, title), h('div', { class: 'muted small' }, sub)));
 }
 
 async function showDetail(id) {
   const d = await act(() => call('instance_show', { id }));
   if (!d) return;
   const v = d.view, s = d.record.signals;
-  overlay(id, [
-    h('p', {}, tag(v.state), ' ', v.reason || ''),
-    h('div', { class: 'kv' },
-      ...[['group', orDash(v.group)], ['place', orDash(v.place_id)], ['run', v.run], ['mode', v.mode], ['runtime', orDash(v.runtime)], ['session', v.auth],
-        ['engine loaded', when(s.engine_loaded_at)], ['signed in', when(s.signed_in_at)], ['connected', when(s.connected_at)], ['disconnected', when(s.disconnected_at)],
-        ['disconnect code (Roblox\'s)', orDash(s.disconnect_code)], ['last screen', orDash(s.screen)],
-        ['RSS / PSS / USS MiB', v.mem ? [mib(v.mem.rss_bytes), mib(v.mem.pss_bytes), mib(v.mem.uss_bytes)].join(' / ') : '-'], ['cgroup memory.current MiB', v.mem ? mib(v.mem.cgroup_current_bytes) : '-']]
+  modal(id,
+    h('div', { class: 'row' }, pill(v.state), h('span', { class: 'muted' }, v.reason || '')),
+    h('div', { class: 'kv small' },
+      ...[['Grupa', orDash(v.group)], ['Place', orDash(v.place_id)], ['Przebieg', v.run], ['Tryb', v.mode], ['Wersja Robloxa', orDash(v.runtime)], ['Sesja', v.auth],
+        ['Silnik załadowany', when(s.engine_loaded_at)], ['Zalogowany', when(s.signed_in_at)], ['Połączony', when(s.connected_at)], ['Rozłączony', when(s.disconnected_at)],
+        ['Kod rozłączenia (Roblox)', orDash(s.disconnect_code)], ['Ostatni ekran', orDash(s.screen)],
+        ['RSS / PSS / USS (MB)', v.mem ? [mib(v.mem.rss_bytes), mib(v.mem.pss_bytes), mib(v.mem.uss_bytes)].join(' / ') : '–']]
         .flatMap(([k, x]) => [h('span', { class: 'muted' }, k), h('span', {}, String(x))])),
-    d.members.length ? table(['PID', 'Class', 'Program', 'RSS MiB'], d.members.map((m) => [m.pid, m.class, m.name, mib(m.rss_bytes)]), [0, 3]) : null,
-    h('h2', {}, 'Last log lines'), h('pre', {}, d.log_tail.join('\n'))]);
+    d.members.length ? h('div', { class: 'list' }, d.members.map((m) => h('div', { class: 'item small' }, h('span', { class: 'grow mono' }, m.name || '?'), h('span', { class: 'muted' }, m.class), h('span', {}, mib(m.rss_bytes) + ' MB')))) : null,
+    h('h2', {}, 'Ostatnie linie logu'), h('pre', {}, d.log_tail.join('\n')));
 }
-
 async function showLogs(id) {
   const l = await act(() => call('logs', { id, lines: 300, follow: false }));
-  if (l) overlay('Log of ' + id, h('pre', {}, l.join('\n')));
+  if (l) modal('Log: ' + id, h('pre', {}, l.join('\n')));
 }
 
-// --------------------------------------------------------------- accounts
-
-async function viewAccounts(root) {
-  const [accts, groups] = await Promise.all([call('account_list'), call('group_list')]);
-  const name = h('input', { placeholder: 'name (a-z, 0-9, -)', size: 16 });
-  const labels = h('input', { placeholder: 'labels, comma separated', size: 20 });
-  const group = h('select', {}, h('option', { value: '' }, 'no group'), groups.map((g) => h('option', { value: g.name }, g.name + ' (' + g.assigned + '/' + g.capacity + ')')));
-  const bulk = h('textarea', { placeholder: 'account names, one per line' });
-  const bulkGroup = h('select', {}, groups.map((g) => h('option', { value: g.name }, g.name)));
-  root.replaceChildren(
-    h('h1', {}, 'Accounts'),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, name, labels, group,
-      h('button', { class: 'primary', on: { click: async () => { const r = await act(() => call('account_add', { name: name.value.trim(), labels: labels.value.split(',').map((x) => x.trim()).filter(Boolean), note: null, group: group.value || null }), 'added'); if (r) route(); } } }, 'Add account'))),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, 'Bulk: add these accounts to group', bulkGroup, h('button', { on: { click: async () => {
-      const names = bulk.value.split('\n').map((x) => x.trim()).filter(Boolean);
-      const r = await act(() => call('group_assign', { group: bulkGroup.value, accounts: names, create_missing: true }), 'assigned');
-      if (r) route();
-    } } }, 'Assign (registers missing ones)')), bulk),
-    table(['Account', 'Group', 'Session', 'State', 'Labels', 'Session note', ''], accts.map((a) => [a.name, orDash(a.group), tag(a.auth), tag(a.state), a.labels.join(', '), a.auth_detail || '',
-      h('span', { class: 'row' },
-        h('button', { on: { click: async () => {
-          const p = prompt('Place id for ' + a.name, localStorage.getItem('place') || '');
-          if (!p) return;
-          localStorage.setItem('place', p);
-          const code = prompt('Private server code (optional; needs engine.join_url_via = "env")', '') || null;
-          await act(() => call('instance_start', { account: a.name, place_id: Number(p), group: null, private_server_code: code, mode: null }), a.name + ': queued');
-        } } }, 'Start…'),
-        h('button', { on: { click: () => { location.hash = '#/login/' + a.name; } } }, 'Sign in…'),
-        h('button', { on: { click: async () => { if (confirm('Erase the stored session of ' + a.name + '?')) { await act(() => call('account_logout', { name: a.name }), 'logged out'); route(); } } } }, 'Log out'),
-        h('button', { class: 'danger', on: { click: async () => { const c = prompt('This deletes the profile, log and stored session. Type "' + a.name + '" to confirm.'); if (c) { await act(() => call('account_remove', { name: a.name, confirm: c }), 'removed'); route(); } } } }, 'Remove'))])));
-}
-
-// ----------------------------------------------------------------- login
+// ------------------------------------------------------------------ login
 
 async function viewLogin(root, acct) {
-  const img = h('img', { class: 'shot', alt: 'the sign-in client' });
-  const status = h('p', { class: 'muted' }, 'starting…');
-  const text = h('input', { placeholder: 'text to type', size: 28 });
-  const pass = h('input', { type: 'password', placeholder: 'password (not shown)', size: 24, autocomplete: 'off' });
+  const img = h('img', { class: 'shot', alt: 'Okno klienta logowania' });
+  const status = h('p', { class: 'muted' }, 'Gotowy. Kliknij „Uruchom okno logowania”.');
+  const text = h('input', { placeholder: 'Tekst do wpisania', class: 'grow' });
+  const pass = h('input', { type: 'password', placeholder: 'Hasło (nie jest pokazywane)', autocomplete: 'off', class: 'grow' });
   let natural = { w: 1, h: 1 };
-  async function shot() {
-    img.src = '/api/shot/' + encodeURIComponent(acct) + '?t=' + Date.now();
-  }
+  const shot = () => { img.src = '/api/shot/' + encodeURIComponent(acct) + '?t=' + Date.now(); };
   img.addEventListener('load', () => { natural = { w: img.naturalWidth, h: img.naturalHeight }; });
   img.addEventListener('click', async (ev) => {
     const r = img.getBoundingClientRect();
@@ -221,207 +336,208 @@ async function viewLogin(root, acct) {
     await act(() => call('login_input', { name: acct, action: { do: 'click', x, y } }));
     setTimeout(shot, 1200);
   });
-  async function send(action) { await act(() => call('login_input', { name: acct, action })); setTimeout(shot, 1200); }
-  const key = (k, label) => h('button', { on: { click: () => send({ do: 'key', key: k }) } }, label || k);
-  root.replaceChildren(
-    h('h1', {}, 'Sign in: ' + acct),
-    h('p', { class: 'muted' }, 'This shows the sign-in client\'s own screen. Click on the picture, type text or a password, press keys. Each click or key is one action you take; nothing repeats or runs by itself. The password is sent once and not stored or logged.'),
-    h('div', { class: 'row' },
-      h('button', { class: 'primary', on: { click: async () => { const r = await act(() => call('login_start', { name: acct })); if (r) poll(); } } }, 'Start sign-in client'),
-      h('button', { on: { click: shot } }, 'Refresh picture'),
-      h('button', { class: 'danger', on: { click: () => act(() => call('login_cancel', { name: acct }), 'stopping') } }, 'Stop client')),
-    status, img,
-    h('div', { class: 'row' }, text, h('button', { on: { click: () => { send({ do: 'text', text: text.value }); text.value = ''; } } }, 'Type text')),
-    h('div', { class: 'row' }, pass, h('button', { on: { click: () => { send({ do: 'text', text: pass.value }); pass.value = ''; } } }, 'Type password')),
-    h('div', { class: 'row' }, key('enter', 'Enter'), key('tab', 'Tab'), key('backspace', 'Backspace'), key('escape', 'Esc'), key('space', 'Space'), key('up', '↑'), key('down', '↓'), key('left', '←'), key('right', '→')));
+  const send = async (action) => { await act(() => call('login_input', { name: acct, action })); setTimeout(shot, 1200); };
+  const key = (k, label) => h('button', { class: 'sm', on: { click: () => send({ do: 'key', key: k }) } }, label);
+
   async function poll() {
     clearInterval(timer);
-    let shownOnce = false;
+    let shown = false;
     const tick = async () => {
       try {
         const v = await call('login_status', { name: acct });
-        status.textContent = v.state + (v.detail ? ' — ' + v.detail : '') + (v.screen ? ' · screen ' + v.screen : '') + (v.signed_in ? ' · SIGNED IN: the session is being stored' : '');
-        if (v.running && v.screen && !shownOnce) { shownOnce = true; shot(); }
+        status.textContent = v.signed_in ? 'Zalogowano. Sesja jest zapisywana.' : (v.detail || v.state) + (v.screen ? ' · ekran: ' + v.screen : '');
+        if (v.running && v.screen && !shown) { shown = true; shot(); }
         if (v.signed_in || !v.running) clearInterval(timer);
       } catch (e) { status.textContent = e.message; }
     };
     await tick();
     timer = setInterval(tick, 2500);
   }
+
+  root.replaceChildren(
+    h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Logowanie: ' + acct),
+      h('p', { class: 'sub' }, 'Widzisz ekran logowania klienta. Klikasz na obrazie, wpisujesz hasło i ewentualny kod. Każde kliknięcie to jedna Twoja akcja, nic nie dzieje się samo.')),
+      btn('Wróć', 'ghost', () => { location.hash = '#/'; })),
+    h('div', { class: 'card' }, h('div', { class: 'row' },
+      btn('Uruchom okno logowania', 'primary', async () => { const r = await act(() => call('login_start', { name: acct })); if (r) poll(); }, 'play'),
+      btn('Odśwież obraz', '', shot),
+      btn('Zatrzymaj', 'danger', () => act(() => call('login_cancel', { name: acct }), 'Zatrzymuję'), 'stop')),
+      status),
+    img,
+    h('div', { class: 'card' },
+      h('div', { class: 'row' }, text, btn('Wpisz tekst', '', () => { send({ do: 'text', text: text.value }); text.value = ''; })),
+      h('div', { class: 'row' }, pass, btn('Wpisz hasło', '', () => { send({ do: 'text', text: pass.value }); pass.value = ''; })),
+      h('div', { class: 'row tight' }, key('enter', 'Enter'), key('tab', 'Tab'), key('backspace', '⌫'), key('escape', 'Esc'), key('space', 'Spacja'), key('up', '↑'), key('down', '↓'), key('left', '←'), key('right', '→'))));
   poll();
-}
-
-// ----------------------------------------------------------------- groups
-
-async function viewGroups(root) {
-  const [groups, nets] = await Promise.all([call('group_list'), call('network_list')]);
-  const name = h('input', { placeholder: 'group name', size: 14 });
-  const netSel = h('select', {}, h('option', { value: '' }, 'no network'), nets.map((n) => h('option', { value: n.network.name }, n.network.name)));
-  const cap = h('input', { type: 'number', min: 1, value: 20, size: 5, style: null });
-  root.replaceChildren(
-    h('h1', {}, 'Groups'),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, name, netSel, h('label', {}, 'capacity', cap), h('span', { class: 'muted' }, 'your own limit, not a Roblox number'),
-      h('button', { class: 'primary', on: { click: async () => { const r = await act(() => call('group_create', { name: name.value.trim(), network: netSel.value || null, capacity: Number(cap.value), note: null }), 'created'); if (r) route(); } } }, 'Create'))),
-    table(['Group', 'Network', 'Assigned', 'Live', 'Network state', ''], groups.map((g) => [g.name, orDash(g.network), g.assigned + ' / ' + g.capacity, g.live, g.network_ready ? tag(g.network_ready) : 'no network',
-      h('span', { class: 'row' },
-        h('button', { on: { click: async () => {
-          const p = prompt('Place id to queue for every account in ' + g.name, localStorage.getItem('place') || '');
-          if (!p) return;
-          localStorage.setItem('place', p);
-          const r = await act(() => call('group_start', { group: g.name, place_id: Number(p), private_server_code: null, mode: null }));
-          if (r) toast(r.queued.length + ' queued' + (r.skipped.length ? ', ' + r.skipped.length + ' skipped: ' + r.skipped.slice(0, 3).map((s) => s.account + ': ' + s.reason).join('; ') : ''), r.skipped.length > 0);
-        } } }, 'Start group…'),
-        h('button', { on: { click: async () => { const c = prompt('New capacity for ' + g.name, g.capacity); if (c) { await act(() => call('group_set', { name: g.name, capacity: Number(c), network: null, clear_network: false, note: null }), 'updated'); route(); } } } }, 'Capacity…'),
-        h('button', { class: 'danger', on: { click: async () => { if (confirm('Remove group ' + g.name + '?')) { await act(() => call('group_remove', { name: g.name }), 'removed'); route(); } } } }, 'Remove'))])));
-}
-
-// --------------------------------------------------------------- networks
-
-async function viewNetworks(root) {
-  const nets = await call('network_list');
-  const f = { name: h('input', { placeholder: 'network name', size: 14 }), exit: h('input', { placeholder: 'expected exit IP', size: 16 }), stun: h('input', { placeholder: 'STUN host:port (optional)', size: 22 }), dns: h('input', { placeholder: 'DNS (if the file has none)', size: 18 }), max: h('input', { type: 'number', placeholder: 'max clients', size: 6 }), v6: h('input', { type: 'checkbox' }), cfg: h('textarea', { placeholder: 'paste the WireGuard file here, or choose it below' }) };
-  const file = h('input', { type: 'file', on: { change: async (ev) => { const x = ev.target.files[0]; if (x) f.cfg.value = await x.text(); } } });
-  const planOut = h('pre', {});
-  root.replaceChildren(
-    h('h1', {}, 'Networks'),
-    h('p', { class: 'muted' }, 'Each network is one WireGuard tunnel, used by one group. The key goes to the privileged helper and is not shown again or kept by the panel.'),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, f.name, f.exit, f.stun, f.dns, f.max, h('label', {}, f.v6, 'block IPv6')), f.cfg, h('div', { class: 'row' }, file,
-      h('button', { class: 'primary', on: { click: async () => {
-        const spec = { name: f.name.value.trim(), config: f.cfg.value, dns: f.dns.value.split(',').map((x) => x.trim()).filter(Boolean), exit_ip: f.exit.value || null, stun_server: f.stun.value || null, block_ipv6: f.v6.checked, max_clients: f.max.value ? Number(f.max.value) : null };
-        const r = await act(() => post('/api/network/add', spec));
-        f.cfg.value = '';
-        if (r) { toast('imported ' + r.network + '. Client public key for the gateway: ' + r.client_public_key); route(); }
-      } } }, 'Import'))),
-    h('div', { class: 'row' },
-      h('button', { on: { click: async () => { const r = await act(() => call('network_plan')); if (r) planOut.textContent = r.text.join('\n') + '\n\nNothing was changed.'; } } }, 'Plan'),
-      h('button', { class: 'primary', on: { click: async () => { if (confirm('Apply the plan? Groups with running clients are not rebuilt.')) { const r = await act(() => call('network_apply', { prune: true })); if (r) { planOut.textContent = r.map((o) => o.group + ': ' + o.action + (o.ok ? '' : ' FAILED') + ' ' + o.message).join('\n'); } } } } }, 'Apply')),
-    planOut,
-    table(['Network', 'Group', 'State', 'Endpoint', 'Configured exit', 'Observed exit', 'Handshake', ''], nets.map((n) => [n.network.name, n.groups.join(', '), tag(n.readiness), n.network.endpoint, orDash(n.network.exit.configured),
-      n.network.exit.observed ? n.network.exit.observed.address + ' (' + (n.network.exit.observed.via === 'stun' ? 'UDP/STUN' : 'TCP/HTTP') + ', ' + age(Math.floor(Date.now() / 1000) - n.network.exit.observed.at) + ' ago)' : '-', age(n.latest_handshake_age_s),
-      h('span', { class: 'row' },
-        h('button', { on: { click: async () => { const r = await act(() => call('network_check', { name: n.network.name })); if (r) { toast('observed ' + r.observed + (r.matches_configured === true ? ' — matches the configured exit' : r.matches_configured === false ? ' — DIFFERENT from ' + r.configured : '')); route(); } } } }, 'Check exit'),
-        h('button', { class: 'danger', on: { click: async () => { if (confirm('Remove network ' + n.network.name + '? Its key is deleted.')) { await act(() => call('network_remove', { name: n.network.name }), 'removed'); route(); } } } }, 'Remove'))])));
-}
-
-// ---------------------------------------------------------------- runtime
-
-async function viewRuntime(root) {
-  let v = [];
-  let listError = null;
-  try { v = await call('runtime_list'); } catch (e) { listError = e.message; }
-  const list = Array.isArray(v) ? v : (v.builds || []);
-  const files = h('input', { type: 'file', multiple: true, accept: '.apk' });
-  const label = h('input', { placeholder: 'label (optional)', size: 18 });
-  const prog = h('p', { class: 'muted' });
-  root.replaceChildren(
-    h('h1', {}, 'Runtime'),
-    h('p', { class: 'muted' }, 'The Roblox Android build the clients run. Upload the base APK (and the engine split APK if the build is split). The manager verifies the signature and that the build is consistent before it installs anything.'),
-    listError ? h('p', { class: 'muted' }, 'Could not list installed builds: ' + listError) : null,
-    table(['', 'Version', 'ABI', 'Label', 'Running', ''], list.map((b) => [b.current ? '●' : '', b.version, b.abi || '', b.label || '', (b.in_use_by || []).length,
-      h('span', { class: 'row' },
-        h('button', { on: { click: async () => { await act(() => call('runtime_use', { version: b.version }), 'selected'); route(); } } }, 'Use'),
-        h('button', { class: 'danger', on: { click: async () => { if (confirm('Remove build ' + b.version + '?')) { await act(() => call('runtime_remove', { version: b.version }), 'removed'); route(); } } } }, 'Remove'))])),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, files, label, h('button', { class: 'primary', on: { click: async () => {
-      const fl = [...files.files];
-      if (!fl.length || fl.length > 4) { toast('choose 1 to 4 APK files', true); return; }
-      const set = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
-      try {
-        for (const [i, f] of fl.entries()) {
-          prog.textContent = 'uploading ' + f.name + ' (' + (i + 1) + '/' + fl.length + ')…';
-          const r = await fetch('/api/upload/runtime?set=' + set + '&name=' + encodeURIComponent(f.name), { method: 'PUT', credentials: 'same-origin', headers: { 'X-CSRF': csrf, 'Content-Type': 'application/octet-stream' }, body: f });
-          const j = await r.json();
-          if (!j.ok) throw new Error(j.error.message);
-        }
-        prog.textContent = 'verifying and installing; this reads every byte…';
-        const r = await post('/api/runtime/import', { set, label: label.value || null, keep_current: false });
-        prog.textContent = 'installed: ' + JSON.stringify(r);
-        toast('runtime installed');
-        route();
-      } catch (e) { prog.textContent = ''; toast(e.message, true); }
-    } } }, 'Upload and install')), prog));
 }
 
 // --------------------------------------------------------------- settings
 
-const ENUMS = { default_mode: ['compatible', 'minimal', 'aggressive'], compositor: ['cage', 'external'], graphics: ['auto', 'software', 'gpu'], join_url_via: ['argv', 'env'], backend: ['secret_service', 'none'], on_daemon_stop: ['keep', 'stop'] };
+function section(ic, title, summary, open, ...body) {
+  return h('details', { class: 'sec', open: open ? true : false },
+    h('summary', {}, h('span', { class: 'ico' }, icon(ic)), h('span', { class: 'grow' }, title, summary ? h('div', { class: 'muted small' }, summary) : null)),
+    h('div', { class: 'body' }, ...body));
+}
+function toggle(checked, onchange) {
+  const i = h('input', { type: 'checkbox', checked, on: { change: () => onchange(i.checked, i) } });
+  return h('label', { class: 'switch' }, i, h('span'));
+}
 
 async function viewSettings(root) {
-  const c = await call('config_get');
+  root.replaceChildren(h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Ustawienia'), h('p', { class: 'sub' }, 'Roblox, sekrety i sieć. Resztę zwykle wystarczy zostawić.'))));
+  const [rt, upd, sec, cfg] = await Promise.all([
+    call('runtime_list').catch(() => []), call('runtime_update_status').catch(() => null), call('secrets_status').catch(() => null), call('config_get').catch(() => null),
+  ]);
+  const builds = Array.isArray(rt) ? rt : (rt.builds || []);
+  const current = builds.find((b) => b.current);
+
+  // --- Roblox
+  const updLine = h('p', { class: 'muted small' });
+  const showUpd = (u) => {
+    if (!u) { updLine.textContent = 'Stan aktualizacji niedostępny.'; return; }
+    updLine.textContent = (u.running ? 'Sprawdzam teraz… ' : '') + (u.last_check ? 'Ostatnio: ' + when(u.last_check) + '. ' + (u.last_result || '') : 'Jeszcze nie sprawdzano.') + (u.newest_seen ? ' Najnowsza u źródła: ' + u.newest_seen + '.' : '');
+  };
+  showUpd(upd);
+  const interval = h('select', { 'aria-label': 'Co ile godzin' }, [1, 3, 6, 12, 24, 72].map((n) => h('option', { value: n, selected: cfg && cfg.effective.runtime && cfg.effective.runtime.check_interval_h === n }, 'co ' + n + ' h')));
+  interval.addEventListener('change', () => act(() => call('config_set', { changes: [{ key: 'runtime.check_interval_h', value: Number(interval.value) }] }), 'Zapisano'));
+  const files = h('input', { type: 'file', multiple: true, accept: '.apk' });
+  const prog = h('p', { class: 'muted small' });
+  const robloxSec = section('cube', 'Roblox', current ? 'Aktualna wersja: ' + current.version : 'Brak zainstalowanej wersji', !current,
+    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('b', {}, 'Automatyczna aktualizacja'), h('div', { class: 'muted small' }, 'Sprawdza nową wersję w tle, pobiera ją i sprawdza podpis Roblox. Działające klienty nie są ruszane.')),
+      toggle(cfg ? !!(cfg.effective.runtime && cfg.effective.runtime.auto_update) : false, (on, el) => act(() => call('config_set', { changes: [{ key: 'runtime.auto_update', value: on }] }), on ? 'Aktualizacje włączone' : 'Aktualizacje wyłączone').then((r) => { if (r === undefined) el.checked = !on; })),
+      interval),
+    h('div', { class: 'row' }, btn(current ? 'Sprawdź i zaktualizuj teraz' : 'Pobierz Roblox', 'primary', async () => {
+      const r = await act(() => call('runtime_update_now'), 'Sprawdzam…');
+      if (!r) return;
+      showUpd(r);
+      const t = setInterval(async () => { try { const u = await call('runtime_update_status'); showUpd(u); if (!u.running) { clearInterval(t); route(); } } catch (_) { clearInterval(t); } }, 2500);
+    }, 'cube'), updLine),
+    builds.length ? h('div', { class: 'list' }, builds.map((b) => h('div', { class: 'item' },
+      h('span', { class: 'grow' }, h('b', {}, b.version), ' ', h('span', { class: 'muted small' }, (b.abi || '') + (b.label ? ' · ' + b.label : ''))),
+      b.current ? h('span', { class: 'pill t-ok' }, 'używana') : btn('Użyj', 'sm', async () => { await act(() => call('runtime_use', { version: b.version }), 'Wybrano ' + b.version); route(); }),
+      b.current ? null : btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć ' + b.version + '?', 'Pliki tej wersji zostaną skasowane.', 'Usuń', true)) { await act(() => call('runtime_remove', { version: b.version }), 'Usunięto'); route(); } })))) : null,
+    h('details', {}, h('summary', { class: 'muted small' }, 'Zainstaluj z własnych plików APK'),
+      h('div', { class: 'row' }, files, btn('Wgraj i zainstaluj', '', async () => {
+        const fl = [...files.files];
+        if (!fl.length || fl.length > 4) { toast('Wybierz od 1 do 4 plików APK', true); return; }
+        const set = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+        try {
+          for (const [i, f] of fl.entries()) {
+            prog.textContent = 'Wysyłam ' + f.name + ' (' + (i + 1) + '/' + fl.length + ')…';
+            const r = await fetch('/api/upload/runtime?set=' + set + '&name=' + encodeURIComponent(f.name), { method: 'PUT', credentials: 'same-origin', headers: { 'X-CSRF': csrf, 'Content-Type': 'application/octet-stream' }, body: f });
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error.message);
+          }
+          prog.textContent = 'Sprawdzam i instaluję…';
+          await post('/api/runtime/import', { set, label: null, keep_current: false });
+          toast('Zainstalowano'); route();
+        } catch (e) { prog.textContent = ''; toast(e.message, true); }
+      })), prog));
+
+  // --- secrets
+  const pass = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Hasło do magazynu sekretów', class: 'grow' });
+  const create = h('input', { type: 'checkbox' });
+  const ready = sec && sec.state === 'ready';
+  const secretsSec = section('lock', 'Magazyn sekretów', sec ? (ready ? 'Odblokowany' : 'Zablokowany – klienty nie wystartują') : '', !ready,
+    sec ? h('p', { class: 'muted small' }, sec.detail) : null,
+    h('div', { class: 'row' }, pass, btn('Odblokuj', 'primary', async () => { const r = await act(() => call('secrets_unlock', { passphrase: pass.value, create: create.checked }), 'Odblokowano'); pass.value = ''; if (r) route(); }),
+      ready ? btn('Zablokuj', '', async () => { await act(() => call('secrets_lock'), 'Zablokowano'); route(); }) : null),
+    h('label', { class: 'row small muted' }, create, 'To pierwszy raz: utwórz nowy magazyn (min. 12 znaków; nie da się odzyskać hasła)'));
+
+  // --- groups & networks
+  const [groups, nets] = await Promise.all([call('group_list').catch(() => []), call('network_list').catch(() => [])]);
+  const gname = h('input', { placeholder: 'Nazwa grupy' });
+  const gnet = h('select', {}, h('option', { value: '' }, 'bez sieci'), nets.map((n) => h('option', { value: n.network.name }, n.network.name)));
+  const gcap = h('input', { type: 'number', min: 1, value: 20, 'aria-label': 'Pojemność' });
+  const planOut = h('pre');
+  planOut.hidden = true;
+  const netSec = section('net', 'Sieć i grupy', groups.length + ' grup, ' + nets.length + ' sieci', false,
+    h('p', { class: 'muted small' }, 'Grupa łączy konta z jedną siecią (tunelem WireGuard). Nową sieć dodaje się w terminalu, bo wymaga roota: sudo cordialctl network add NAZWA --wireguard-config PLIK.conf'),
+    groups.length ? h('div', { class: 'list' }, groups.map((g) => h('div', { class: 'item' },
+      h('span', { class: 'grow' }, h('b', {}, g.name), ' ', h('span', { class: 'muted small' }, (g.network ? 'sieć ' + g.network : 'bez sieci') + ' · ' + g.assigned + '/' + g.capacity + ' kont')),
+      btn('Start grupy', 'sm', async () => {
+        const place = localStorage.getItem('place') || '';
+        if (!/^[0-9]+$/.test(place)) { toast('Wpisz najpierw Place ID na stronie Konta', true); return; }
+        const r = await act(() => call('group_start', { group: g.name, place_id: Number(place), private_server_code: null, mode: null }));
+        if (r) toast(r.queued.length + ' w kolejce' + (r.skipped.length ? ', pominięto ' + r.skipped.length + ': ' + r.skipped.slice(0, 3).map((s) => s.account + ': ' + s.reason).join('; ') : ''), r.skipped.length > 0);
+      }),
+      btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć grupę ' + g.name + '?', 'Konta zostają, tracą tylko przypisanie.', 'Usuń', true)) { await act(() => call('group_remove', { name: g.name }), 'Usunięto'); route(); } })))) : null,
+    h('div', { class: 'row' }, gname, gnet, gcap, btn('Utwórz grupę', '', async () => { const r = await act(() => call('group_create', { name: gname.value.trim(), network: gnet.value || null, capacity: Number(gcap.value), note: null }), 'Utworzono'); if (r) route(); })),
+    nets.length ? h('div', { class: 'list' }, nets.map((n) => h('div', { class: 'item' },
+      h('span', { class: 'grow' }, h('b', {}, n.network.name), ' ', h('span', { class: 'muted small' }, n.readiness + (n.network.exit.configured ? ' · wyjście ' + n.network.exit.configured : ''))),
+      btn('Sprawdź wyjście', 'sm', async () => { const r = await act(() => call('network_check', { name: n.network.name })); if (r) { toast('Widziane wyjście: ' + r.observed + (r.matches_configured === false ? ' (INNE niż skonfigurowane)' : '')); route(); } }),
+      btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć sieć ' + n.network.name + '?', 'Jej klucz zostanie skasowany.', 'Usuń', true)) { await act(() => call('network_remove', { name: n.network.name }), 'Usunięto'); route(); } })))) : null,
+    nets.length ? h('div', { class: 'row' },
+      btn('Pokaż plan zmian', '', async () => { const r = await act(() => call('network_plan')); if (r) { planOut.hidden = false; planOut.textContent = r.text.join('\n') + '\n\nNiczego nie zmieniono.'; } }),
+      btn('Zastosuj', 'primary', async () => { if (await ask('Zastosować plan sieci?', 'Grupy z działającymi klientami nie są przebudowywane.', 'Zastosuj')) { const r = await act(() => call('network_apply', { prune: true })); if (r) { planOut.hidden = false; planOut.textContent = r.map((o) => o.group + ': ' + o.action + (o.ok ? '' : ' BŁĄD') + ' ' + o.message).join('\n'); } } })) : null,
+    planOut);
+
+  // --- advanced
+  const advBody = h('div');
+  const advSec = section('gear', 'Zaawansowane', 'Diagnostyka i wszystkie ustawienia demona', false, advBody);
+  advSec.addEventListener('toggle', async () => { if (advSec.open && !advBody.childNodes.length) await buildAdvanced(advBody, cfg); }, { once: false });
+
+  root.append(robloxSec, secretsSec, netSec, advSec);
+}
+
+const ENUMS = { default_mode: ['compatible', 'minimal', 'aggressive'], compositor: ['cage', 'external'], graphics: ['auto', 'software', 'gpu'], join_url_via: ['argv', 'env'], backend: ['secret_service', 'none'], on_daemon_stop: ['keep', 'stop'] };
+
+async function buildAdvanced(box, c) {
+  box.replaceChildren(h('p', { class: 'muted small' }, 'Wczytuję…'));
+  const checks = await act(() => call('daemon_doctor')) || [];
+  const cls = { ok: 't-ok', warn: 't-warn', fail: 't-bad', info: 't-info' };
   const inputs = [];
-  const sections = Object.entries(c.effective).map(([sec, vals]) => h('div', { class: 'card' }, h('h2', {}, sec),
-    h('div', { class: 'kv' }, Object.entries(vals).flatMap(([k, v]) => {
+  const sections = c ? Object.entries(c.effective).map(([sec, vals]) => h('details', {}, h('summary', { class: 'small' }, sec),
+    h('div', { class: 'kv small' }, Object.entries(vals).flatMap(([k, v]) => {
       const key = sec + '.' + k;
       const over = c.overrides[sec] && Object.prototype.hasOwnProperty.call(c.overrides[sec], k);
       let input;
       if (typeof v === 'boolean') input = h('input', { type: 'checkbox', checked: v });
       else if (ENUMS[k]) input = h('select', {}, ENUMS[k].map((o) => h('option', { value: o, selected: o === v }, o)));
       else if (typeof v === 'number') input = h('input', { type: 'number', value: v, step: 'any' });
-      else if (typeof v === 'string') input = h('input', { value: v, size: 40 });
-      else input = h('input', { value: JSON.stringify(v), size: 40 });
+      else if (typeof v === 'string') input = h('input', { value: v });
+      else input = h('input', { value: JSON.stringify(v) });
       inputs.push({ key, input, orig: v });
-      return [h('span', {}, key, over ? h('span', { class: 'tag s-warn' }, 'override') : null), h('span', { class: 'row' }, input,
-        over ? h('button', { on: { click: async () => { await act(() => call('config_set', { changes: [{ key, value: null }] }), key + ': back to the file value'); route(); } } }, 'Unset') : null)];
-    }))));
-  root.replaceChildren(h('h1', {}, 'Settings'),
-    h('p', { class: 'muted' }, 'Changes are checked as a whole before anything is written, and kept apart from ' + c.file + ' (in ' + c.overrides_file + '). Each result says whether it is in effect now, at the next client start, or after a daemon restart.'),
-    c.problems.length ? h('pre', {}, c.problems.join('\n')) : null,
+      return [h('span', { class: 'muted' }, key, over ? ' •' : ''), h('span', { class: 'row tight' }, input,
+        over ? btn('Cofnij', 'sm ghost', async () => { await act(() => call('config_set', { changes: [{ key, value: null }] }), key + ': wartość z pliku'); route(); }) : null)];
+    })))) : [];
+  box.replaceChildren(
+    h('h2', {}, 'Diagnostyka'),
+    h('div', { class: 'list' }, checks.map((x) => h('div', { class: 'item small' }, h('span', { class: 'pill ' + (cls[x.status] || 't-off') }, x.status), h('span', { class: 'grow' }, h('b', {}, x.title), ' ', h('span', { class: 'muted' }, x.detail), x.fix ? h('div', { class: 'muted' }, 'Naprawa: ' + x.fix) : null)))),
+    h('h2', {}, 'Ustawienia demona'),
+    h('p', { class: 'muted small' }, 'Zmiany są sprawdzane jako całość. Ustawienia wpływające na bezpieczeństwo zmienia się tylko w pliku /etc/cordial-hrd/cordiald.toml.'),
     ...sections,
-    h('div', { class: 'row' }, h('button', { class: 'primary', on: { click: async () => {
+    h('div', { class: 'row' }, btn('Zapisz zmiany', 'primary', async () => {
       const changes = [];
       for (const { key, input, orig } of inputs) {
         let val;
         if (input.type === 'checkbox') val = input.checked;
         else if (typeof orig === 'number') val = Number(input.value);
         else if (typeof orig === 'string') val = input.value;
-        else { try { val = JSON.parse(input.value); } catch (_) { toast(key + ' is not valid JSON', true); return; } }
+        else { try { val = JSON.parse(input.value); } catch (_) { toast(key + ': to nie jest poprawny JSON', true); return; } }
         if (JSON.stringify(val) !== JSON.stringify(orig)) changes.push({ key, value: val });
       }
-      if (!changes.length) { toast('nothing changed'); return; }
+      if (!changes.length) { toast('Nic się nie zmieniło'); return; }
       const r = await act(() => call('config_set', { changes }));
-      if (r) { toast('saved. now: ' + r.live.length + ', next start: ' + r.next_start.length + ', needs restart: ' + r.restart.length); route(); }
-    } } }, 'Save changes')));
-}
-
-// ---------------------------------------------------------------- secrets
-
-async function viewSecrets(root) {
-  const s = await call('secrets_status');
-  const pass = h('input', { type: 'password', autocomplete: 'off', placeholder: 'keyring passphrase', size: 28 });
-  const create = h('input', { type: 'checkbox' });
-  root.replaceChildren(h('h1', {}, 'Secret store'),
-    h('div', { class: 'card' }, h('p', {}, tag(s.state === 'ready' ? 'ok' : 'warn'), ' ', s.state, ' — ', s.detail),
-      h('div', { class: 'row' }, pass, h('label', {}, create, 'create a new keyring (12+ characters; it cannot be recovered)'),
-        h('button', { class: 'primary', on: { click: async () => { const r = await act(() => call('secrets_unlock', { passphrase: pass.value, create: create.checked }), 'unlocked'); pass.value = ''; if (r) route(); } } }, 'Unlock'),
-        h('button', { on: { click: async () => { await act(() => call('secrets_lock'), 'locked'); route(); } } }, 'Lock'))),
-    h('p', { class: 'muted' }, 'The passphrase is sent once to the daemon, handed to the keyring on its standard input and not stored anywhere. After a reboot the keyring is locked until you unlock it.'));
-}
-
-// ----------------------------------------------------------------- doctor
-
-async function viewDoctor(root) {
-  const cs = await call('daemon_doctor');
-  root.replaceChildren(h('h1', {}, 'Doctor'),
-    table(['', 'Check', 'Detail', 'Fix'], cs.map((c) => [tag(c.status), c.title, c.detail, c.fix || ''])));
+      if (r) { toast('Zapisano. Od razu: ' + r.live.length + ', od następnego startu: ' + r.next_start.length + ', po restarcie demona: ' + r.restart.length); route(); }
+    })));
 }
 
 // ----------------------------------------------------------------- router
-
-const VIEWS = { status: viewStatus, accounts: viewAccounts, groups: viewGroups, networks: viewNetworks, runtime: viewRuntime, settings: viewSettings, secrets: viewSecrets, doctor: viewDoctor };
 
 async function route() {
   clearInterval(timer);
   if (!csrf) {
     try { const s = await raw('/api/session'); csrf = s.csrf; } catch (_) { showLogin(); return; }
   }
-  const parts = (location.hash || '#/status').slice(2).split('/');
-  const root = $('#main');
+  const parts = (location.hash || '#/').slice(2).split('/');
   try {
-    if (parts[0] === 'login' && parts[1]) { renderTop('accounts'); await viewLogin(root, decodeURIComponent(parts[1])); return; }
-    const name = VIEWS[parts[0]] ? parts[0] : 'status';
-    renderTop(name);
-    await VIEWS[name](root);
+    if (parts[0] === 'login' && parts[1]) { await viewLogin(renderTop('home'), decodeURIComponent(parts[1])); return; }
+    if (parts[0] === 'settings') { await viewSettings(renderTop('settings')); return; }
+    await viewHome(renderTop('home'));
   } catch (e) {
-    root.replaceChildren(h('p', { class: 'muted' }, e.message));
+    const m = $('#main') || renderTop('home');
+    m.replaceChildren(h('p', { class: 'muted' }, e.message));
   }
 }
 

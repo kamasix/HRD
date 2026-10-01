@@ -208,6 +208,11 @@ pub enum Request {
     RuntimeUse {
         version: String,
     },
+    /// What the automatic updater did and is doing.
+    RuntimeUpdateStatus,
+    /// Check now (and install if newer), whatever `runtime.auto_update` says.
+    /// Returns at once; follow it with `RuntimeUpdateStatus`.
+    RuntimeUpdateNow,
     RuntimeRemove {
         version: String,
     },
@@ -300,6 +305,20 @@ pub struct ConfigChange {
     pub key: String,
     /// `None` removes the override and returns the key to its file value.
     pub value: Option<serde_json::Value>,
+}
+
+/// The Roblox build updater, as the panel and `cordialctl runtime update` show it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateView {
+    pub enabled: bool,
+    pub interval_h: u64,
+    pub running: bool,
+    pub last_check: Option<u64>,
+    pub last_ok: Option<bool>,
+    /// A sentence: up to date / installed X / what failed.
+    pub last_result: Option<String>,
+    pub newest_seen: Option<String>,
+    pub next_check: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

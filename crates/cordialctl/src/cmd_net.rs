@@ -163,6 +163,40 @@ pub fn runtime(ctx: &Ctx, c: RuntimeCmd) -> Result<()> {
             list,
             keep_current,
         } => fetch_runtime(ctx, version, list, keep_current)?,
+        RuntimeCmd::Update { now } => {
+            let v: hrd_core::proto::UpdateView = ctx.client()?.call(if now {
+                Request::RuntimeUpdateNow
+            } else {
+                Request::RuntimeUpdateStatus
+            })?;
+            if ctx.out.json {
+                ctx.out.value(&serde_json::to_value(&v).unwrap_or_default());
+            } else {
+                let at = |t: Option<u64>| {
+                    t.map(hrd_core::time::rfc3339)
+                        .unwrap_or_else(|| "never".into())
+                };
+                println!(
+                    "automatic updates: {} (every {} h)",
+                    if v.enabled { "on" } else { "off" },
+                    v.interval_h
+                );
+                println!("last check:        {}", at(v.last_check));
+                println!(
+                    "result:            {}",
+                    v.last_result.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "newest on mirror:  {}",
+                    v.newest_seen.as_deref().unwrap_or("-")
+                );
+                if v.running || now {
+                    println!(
+                        "a check is running; run `cordialctl runtime update` again in a minute"
+                    );
+                }
+            }
+        }
         RuntimeCmd::List => {
             let v: Value = ctx.client()?.call(Request::RuntimeList)?;
             if ctx.out.json {

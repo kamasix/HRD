@@ -140,6 +140,12 @@ enum RuntimeCmd {
         #[arg(long)]
         keep_current: bool,
     },
+    /// Show the automatic updater (turn it on with `config set runtime.auto_update true`)
+    Update {
+        /// Check the mirror now and install a newer build if there is one
+        #[arg(long)]
+        now: bool,
+    },
     List,
     /// Choose the build new clients start with (running ones keep theirs)
     Use {
