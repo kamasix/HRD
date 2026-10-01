@@ -18,6 +18,12 @@ pub struct NetdConfig {
     /// (after a reboot, `/run` is empty). **Off by default**: a package must not
     /// change the network on its own; the operator turns this on deliberately.
     pub apply_on_start: bool,
+    /// Let the service user (and so the web panel) define a proxy, that is hand
+    /// the helper a WireGuard file with its private key. **Off by default**:
+    /// whoever can define a proxy decides where the traffic of every account
+    /// that uses it goes, so out of the box only root may. Switching it on in
+    /// this root-owned file is the administrator saying the panel may do it.
+    pub allow_service_define: bool,
 }
 
 impl Default for NetdConfig {
@@ -26,6 +32,7 @@ impl Default for NetdConfig {
             service_user: "cordial".into(),
             service_group: "cordial".into(),
             apply_on_start: false,
+            allow_service_define: false,
         }
     }
 }

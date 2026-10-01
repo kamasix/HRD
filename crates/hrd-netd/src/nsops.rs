@@ -15,7 +15,7 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::{Error, Result};
 use rustix::fs::OFlags;
 use rustix::mount::{mount_bind, unmount, UnmountFlags};
@@ -47,7 +47,7 @@ fn ensure_dir(dir: &Path) -> Result<()> {
 }
 
 /// Create the namespace `name` under `dir` if it does not exist. Idempotent.
-pub fn create(dir: &Path, name: &GroupName) -> Result<()> {
+pub fn create(dir: &Path, name: &ProxyGroupName) -> Result<()> {
     ensure_dir(dir)?;
     let path = dir.join(name.as_str());
     if is_nsfs(&path) {
@@ -95,7 +95,7 @@ pub fn create(dir: &Path, name: &GroupName) -> Result<()> {
 }
 
 /// Remove the namespace and the files generated for it. Idempotent.
-pub fn remove(dir: &Path, name: &GroupName) -> Result<()> {
+pub fn remove(dir: &Path, name: &ProxyGroupName) -> Result<()> {
     let path = dir.join(name.as_str());
     if is_nsfs(&path) {
         unmount(&path, UnmountFlags::DETACH)

@@ -12,7 +12,7 @@ use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, RwLock};
 
 use hrd_core::config::Config;
-use hrd_core::ids::{AccountName, GroupName};
+use hrd_core::ids::{AccountName, ProxyGroupName};
 use hrd_core::layout::Layout;
 use hrd_core::model::{InstanceRecord, Registry, State};
 use hrd_core::proto::Event;
@@ -97,7 +97,7 @@ pub struct Inner {
     pub queue: VecDeque<AccountName>,
     pub est: Estimator,
     pub last_start_ms: u64,
-    pub net_status: BTreeMap<GroupName, (u64, GroupStatus)>,
+    pub net_status: BTreeMap<ProxyGroupName, (u64, GroupStatus)>,
     pub net_error: Option<(u64, String)>,
     pub spawn_seq: usize,
 }
@@ -199,23 +199,28 @@ impl Daemon {
     }
 }
 
-/// Load the registry, refusing a newer schema than this build understands.
+/// Load the registry, refusing a newer schema than this build understands. An
+/// older one is upgraded and written back at once; the file as it was is kept
+/// beside it (`registry.json.schema1`), once, in case the older build is wanted
+/// again.
 pub fn load_registry(layout: &Layout) -> Result<Registry> {
-    match fsutil::read_limited_opt(&layout.registry_file(), 64 * 1024 * 1024)? {
+    let path = layout.registry_file();
+    match fsutil::read_limited_opt(&path, 64 * 1024 * 1024)? {
         None => Ok(Registry::default()),
         Some(b) => {
-            let r: Registry = serde_json::from_slice(&b).map_err(|e| {
-                Error::invalid(format!(
-                    "{} is not a valid registry: {e}",
-                    layout.registry_file().display()
-                ))
-            })?;
-            if r.schema > hrd_core::model::REGISTRY_SCHEMA {
-                return Err(Error::invalid(format!(
-                    "the registry has schema {} and this build understands up to {}; install a newer hrdd",
+            let (r, from) = Registry::from_slice(&b)
+                .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
+            if let Some(old) = from {
+                let keep = path.with_extension(format!("json.schema{old}"));
+                if !keep.exists() {
+                    fsutil::atomic_write(&keep, &b, 0o600)?;
+                }
+                fsutil::write_json_atomic(&path, &r, 0o600)?;
+                eprintln!(
+                    "<5>hrdd: the registry was upgraded from schema {old} to {} (the old file is kept as {})",
                     r.schema,
-                    hrd_core::model::REGISTRY_SCHEMA
-                )));
+                    keep.display()
+                );
             }
             Ok(r)
         }
@@ -225,4 +230,98 @@ pub fn load_registry(layout: &Layout) -> Result<Registry> {
 pub fn load_record(layout: &Layout, id: &AccountName) -> Option<InstanceRecord> {
     let b = fsutil::read_limited_opt(&layout.instance_record(id), 1024 * 1024).ok()??;
     serde_json::from_slice(&b).ok()
+}
+
+/// A daemon over a scratch directory, for tests of the operations that need no
+/// helper, no keyring and no client.
+#[cfg(test)]
+pub mod testing {
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    pub fn daemon(tag: &str) -> Arc<Daemon> {
+        let root = std::env::temp_dir().join(format!("hrdd-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let layout = Layout::under(&root);
+        for p in [
+            &layout.state_dir,
+            &layout.run_dir,
+            &layout.log_dir,
+            &layout.instances_dir(),
+        ] {
+            fsutil::ensure_private_dir(p, 0o700).unwrap();
+        }
+        let cfg = Config::default();
+        Arc::new(Daemon {
+            netd: NetdClient::new(layout.netd_socket()),
+            secrets: crate::secrets::Secrets::new(layout.clone(), &cfg),
+            layout,
+            cfg: RwLock::new(Arc::new(cfg)),
+            inner: Mutex::new(Inner {
+                reg: Registry::default(),
+                live: BTreeMap::new(),
+                queue: VecDeque::new(),
+                est: Estimator::default(),
+                last_start_ms: 0,
+                net_status: BTreeMap::new(),
+                net_error: None,
+                spawn_seq: 0,
+            }),
+            deleg: None,
+            events: Events::new(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            stop_after_instances: AtomicBool::new(false),
+            shutdown_decided: AtomicBool::new(false),
+            started_at: 0,
+            online_cpus: 1,
+            samples: Mutex::new(Default::default()),
+            notes: Mutex::new(Vec::new()),
+            update: Mutex::new(Default::default()),
+            update_now: AtomicBool::new(false),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_older_registry_is_upgraded_on_load_and_the_old_file_is_kept_once() {
+        let d = testing::daemon("upgrade");
+        let path = d.layout.registry_file();
+        let v1 = br#"{"schema":1,
+            "accounts":{"alt-01":{"name":"alt-01","group":"g01","created_at":1,"auth":{}}},
+            "groups":{"g01":{"name":"g01","capacity":20,"created_at":2}}}"#;
+        std::fs::write(&path, v1).unwrap();
+
+        let r = load_registry(&d.layout).unwrap();
+        assert_eq!(r.schema, hrd_core::model::REGISTRY_SCHEMA);
+        assert_eq!(r.proxy_groups.len(), 1);
+        assert!(r.accounts.values().next().unwrap().proxy_group.is_some());
+
+        // written back in the new shape, with the old file beside it
+        let now: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(now["schema"], hrd_core::model::REGISTRY_SCHEMA);
+        let keep = path.with_extension("json.schema1");
+        assert_eq!(std::fs::read(&keep).unwrap(), v1);
+
+        // loading again changes nothing and does not touch the backup
+        std::fs::write(&keep, b"first").unwrap();
+        let again = load_registry(&d.layout).unwrap();
+        assert_eq!(again.proxy_groups.len(), 1);
+        assert_eq!(std::fs::read(&keep).unwrap(), b"first");
+    }
+
+    #[test]
+    fn a_registry_from_a_newer_build_is_refused_and_left_alone() {
+        let d = testing::daemon("future");
+        let path = d.layout.registry_file();
+        std::fs::write(&path, br#"{"schema":99}"#).unwrap();
+        let e = load_registry(&d.layout).unwrap_err().to_string();
+        assert!(e.contains("schema 99"), "{e}");
+        assert_eq!(std::fs::read(&path).unwrap(), br#"{"schema":99}"#);
+    }
 }

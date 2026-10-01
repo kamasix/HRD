@@ -119,9 +119,21 @@ name_type!(
 );
 
 name_type!(
-    /// A group of accounts sharing one network exit.
+    /// A named set of proxy groups that join the same place. Purely
+    /// organisational: it is never a path, a namespace or a cgroup.
     GroupName,
     "group",
+    24,
+    |c: char| c.is_ascii_lowercase(),
+    |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'
+);
+
+name_type!(
+    /// Accounts that leave through one proxy: one tunnel, one network
+    /// namespace. It names the namespace file, so it has the same shape as a
+    /// network name and, unlike a group name, is unique across every group.
+    ProxyGroupName,
+    "proxy group",
     24,
     |c: char| c.is_ascii_lowercase(),
     |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'
@@ -213,6 +225,7 @@ mod tests {
         }
         for s in ["g01", "de-1", "exit-germany-a"] {
             GroupName::new(s).unwrap();
+            ProxyGroupName::new(s).unwrap();
             NetworkName::new(s).unwrap();
         }
     }
@@ -257,6 +270,10 @@ mod tests {
             "a".repeat(25).as_str(),
         ] {
             assert!(GroupName::new(s).is_err(), "group {s:?} must be refused");
+            assert!(
+                ProxyGroupName::new(s).is_err(),
+                "proxy group {s:?} must be refused"
+            );
             assert!(
                 NetworkName::new(s).is_err(),
                 "network {s:?} must be refused"

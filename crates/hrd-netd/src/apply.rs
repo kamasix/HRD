@@ -10,7 +10,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 use hrd_core::fsutil;
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::layout::Layout;
 use hrd_core::time::now_unix;
 use hrd_core::{Error, Result};
@@ -28,20 +28,20 @@ pub struct Env {
 }
 
 impl Env {
-    pub fn ns_path(&self, g: &GroupName) -> PathBuf {
+    pub fn ns_path(&self, g: &ProxyGroupName) -> PathBuf {
         self.layout.netns_file(g)
     }
 
-    fn open_ns(&self, g: &GroupName) -> Result<File> {
+    fn open_ns(&self, g: &ProxyGroupName) -> Result<File> {
         nsops::open(&self.ns_path(g))
     }
 
-    fn ip(&self, g: &GroupName, args: &[&str]) -> Result<()> {
+    fn ip(&self, g: &ProxyGroupName, args: &[&str]) -> Result<()> {
         let ns = self.open_ns(g)?;
         exec::run_ok(&self.tools.ip, args, None, Some(&ns)).map(|_| ())
     }
 
-    pub fn iface_exists(&self, g: &GroupName) -> bool {
+    pub fn iface_exists(&self, g: &ProxyGroupName) -> bool {
         let Ok(ns) = self.open_ns(g) else {
             return false;
         };
@@ -238,7 +238,7 @@ pub fn apply_group(env: &Env, gp: &GroupPlan, spec: &GroupSpec, net: &StoredNetw
     env.store.save_manifest(&m)
 }
 
-pub fn remove_group(env: &Env, group: &GroupName) -> Result<()> {
+pub fn remove_group(env: &Env, group: &ProxyGroupName) -> Result<()> {
     nsops::remove(&env.layout.netns_dir(), group)?;
     let mut m = env.store.manifest();
     m.groups.remove(group);

@@ -5,26 +5,188 @@ use serde_json::Value;
 use hrd_core::ids::AccountName;
 use hrd_core::model::State;
 use hrd_core::proto::{
-    ClassStats, Event, Filter, GroupView, InstanceDetail, InstanceView, Request, StatsView,
+    ClassStats, Event, Filter, GroupView, InstanceDetail, InstanceView, OverviewView,
+    ProxyGroupView, Request, StatsView,
 };
 use hrd_core::time::{human_duration, now_unix, rfc3339};
 use hrd_core::{fsutil, Error, Result};
 
 use crate::util::{age, mib, mib_long, opt, pct, table, NM};
-use crate::{Ctx, GroupCmd, InstanceCmd, QueueCmd, StatusArgs};
+use crate::{Ctx, GroupCmd, InstanceCmd, ProxyGroupCmd, QueueCmd, StatusArgs};
 
 pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
     let mut cl = ctx.client()?;
     match c {
         GroupCmd::Create {
             name,
-            network,
-            capacity,
+            place_id,
+            mode,
             note,
         } => {
             let v: GroupView = cl.call(Request::GroupCreate {
                 name,
-                network,
+                place_id,
+                mode,
+                note,
+            })?;
+            if ctx.out.json {
+                ctx.out.data(&v);
+            } else {
+                println!(
+                    "group {} created (place {}). Next: hrdctl proxy-group create NAME --group {} --capacity N",
+                    v.name,
+                    opt(&v.place_id),
+                    v.name
+                );
+            }
+        }
+        GroupCmd::List => {
+            let v: Vec<GroupView> = cl.call(Request::GroupList)?;
+            if ctx.out.json {
+                ctx.out.data(&v);
+            } else {
+                let rows: Vec<Vec<String>> = v
+                    .iter()
+                    .map(|g| {
+                        vec![
+                            g.name.to_string(),
+                            opt(&g.place_id),
+                            g.mode
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            g.proxy_groups.to_string(),
+                            g.accounts.to_string(),
+                            g.live.to_string(),
+                            g.note.clone().unwrap_or_default(),
+                        ]
+                    })
+                    .collect();
+                print!(
+                    "{}",
+                    table(
+                        &[
+                            "GROUP",
+                            "PLACE",
+                            "MODE",
+                            "PROXY GROUPS",
+                            "ACCOUNTS",
+                            "LIVE",
+                            "NOTE"
+                        ],
+                        &rows,
+                        &[3, 4, 5]
+                    )
+                );
+            }
+        }
+        GroupCmd::Set {
+            name,
+            place_id,
+            clear_place_id,
+            mode,
+            clear_mode,
+            note,
+        } => {
+            let v: GroupView = cl.call(Request::GroupSet {
+                name,
+                place_id,
+                clear_place_id,
+                mode,
+                clear_mode,
+                note,
+            })?;
+            if ctx.out.json {
+                ctx.out.data(&v);
+            } else {
+                println!(
+                    "group {}: place {}, mode {}",
+                    v.name,
+                    opt(&v.place_id),
+                    v.mode.map(|m| m.as_str()).unwrap_or("-")
+                );
+            }
+        }
+        GroupCmd::Remove { name, cascade } => {
+            let v: Value = cl.call(Request::GroupRemove { name, cascade })?;
+            if ctx.out.json {
+                ctx.out.value(&v);
+            } else {
+                println!("{}", v["note"].as_str().unwrap_or("removed"));
+            }
+        }
+        GroupCmd::Start {
+            name,
+            place_id,
+            private_server_code,
+            mode,
+        } => {
+            let v: Value = cl.call(Request::GroupStart {
+                group: name,
+                place_id,
+                private_server_code,
+                mode,
+            })?;
+            print_start(ctx, &v, "group", "group");
+        }
+        GroupCmd::Stop { name, force } => {
+            let v: Value = cl.call(Request::GroupStop { name, force })?;
+            print_stop(ctx, &v);
+        }
+    }
+    Ok(())
+}
+
+/// What a group or proxy-group start reports: how many were queued, and each
+/// account that was left out with the reason.
+fn print_start(ctx: &Ctx, v: &Value, key: &str, what: &str) {
+    if ctx.out.json {
+        ctx.out.value(v);
+        return;
+    }
+    let q = v["queued"].as_array().map(|a| a.len()).unwrap_or(0);
+    println!(
+        "{q} queued in {what} {}; starts are paced by the scheduler (see `hrdctl status`)",
+        v[key].as_str().unwrap_or("")
+    );
+    for s in v["skipped"].as_array().into_iter().flatten() {
+        println!(
+            "  skipped {}: {}",
+            s["account"].as_str().unwrap_or("?"),
+            s["reason"].as_str().unwrap_or("?")
+        );
+    }
+}
+
+fn print_stop(ctx: &Ctx, v: &Value) {
+    if ctx.out.json {
+        ctx.out.value(v);
+    } else {
+        println!(
+            "stopping {} instance(s){}",
+            v["stopping"],
+            if v["force"].as_bool() == Some(true) {
+                " (killing)"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
+pub fn proxy_group(ctx: &Ctx, c: ProxyGroupCmd) -> Result<()> {
+    let mut cl = ctx.client()?;
+    match c {
+        ProxyGroupCmd::Create {
+            name,
+            group,
+            proxy,
+            capacity,
+            note,
+        } => {
+            let v: ProxyGroupView = cl.call(Request::ProxyGroupCreate {
+                name,
+                group,
+                network: proxy,
                 capacity,
                 note,
             })?;
@@ -32,14 +194,15 @@ pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
                 ctx.out.data(&v);
             } else {
                 println!(
-                    "group {} created (capacity {}, network {})",
+                    "proxy group {} created in group {} (capacity {}, proxy {})",
                     v.name,
+                    v.group,
                     v.capacity,
                     opt(&v.network)
                 );
             }
         }
-        GroupCmd::Assign {
+        ProxyGroupCmd::Assign {
             name,
             accounts,
             create_missing,
@@ -56,26 +219,15 @@ pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
                     Error::invalid(format!("{} line {}: {e}", accounts.display(), i + 1))
                 })?);
             }
-            let v: Value = cl.call(Request::GroupAssign {
-                group: name,
+            let v: Value = cl.call(Request::AccountAssign {
                 accounts: names,
+                proxy_group: Some(name),
                 create_missing,
             })?;
-            if ctx.out.json {
-                ctx.out.value(&v);
-            } else {
-                println!(
-                    "group {}: {} assigned, {} already there, {} registered, {} members now",
-                    v["group"].as_str().unwrap_or(""),
-                    v["assigned"],
-                    v["unchanged"],
-                    v["created"],
-                    v["members"]
-                );
-            }
+            print_assign(ctx, &v);
         }
-        GroupCmd::List => {
-            let v: Vec<GroupView> = cl.call(Request::GroupList)?;
+        ProxyGroupCmd::List { group } => {
+            let v: Vec<ProxyGroupView> = cl.call(Request::ProxyGroupList { group })?;
             if ctx.out.json {
                 ctx.out.data(&v);
             } else {
@@ -84,12 +236,13 @@ pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
                     .map(|g| {
                         vec![
                             g.name.to_string(),
+                            g.group.to_string(),
                             opt(&g.network),
                             format!("{}/{}", g.assigned, g.capacity),
                             g.live.to_string(),
                             g.network_ready
                                 .map(|r| format!("{r:?}").to_lowercase())
-                                .unwrap_or_else(|| "no network".into()),
+                                .unwrap_or_else(|| "no proxy".into()),
                             g.note.clone().unwrap_or_default(),
                         ]
                     })
@@ -98,78 +251,155 @@ pub fn group(ctx: &Ctx, c: GroupCmd) -> Result<()> {
                     "{}",
                     table(
                         &[
+                            "PROXY GROUP",
                             "GROUP",
-                            "NETWORK",
-                            "ASSIGNED",
+                            "PROXY",
+                            "ACCOUNTS",
                             "LIVE",
-                            "NETWORK STATE",
+                            "PROXY STATE",
                             "NOTE"
                         ],
                         &rows,
-                        &[2, 3]
+                        &[3, 4]
                     )
                 );
             }
         }
-        GroupCmd::Set {
+        ProxyGroupCmd::Set {
             name,
+            group,
             capacity,
-            network,
-            clear_network,
+            proxy,
+            clear_proxy,
             note,
         } => {
-            let v: GroupView = cl.call(Request::GroupSet {
+            let v: ProxyGroupView = cl.call(Request::ProxyGroupSet {
                 name,
+                group,
                 capacity,
-                network,
-                clear_network,
+                network: proxy,
+                clear_network: clear_proxy,
                 note,
             })?;
             if ctx.out.json {
                 ctx.out.data(&v);
             } else {
                 println!(
-                    "group {}: capacity {}, network {}",
+                    "proxy group {}: group {}, capacity {}, proxy {}",
                     v.name,
+                    v.group,
                     v.capacity,
                     opt(&v.network)
                 );
             }
         }
-        GroupCmd::Remove { name } => {
-            let v: Value = cl.call(Request::GroupRemove { name })?;
+        ProxyGroupCmd::Remove { name, unassign } => {
+            let v: Value = cl.call(Request::ProxyGroupRemove { name, unassign })?;
             if ctx.out.json {
                 ctx.out.value(&v);
             } else {
                 println!("{}", v["note"].as_str().unwrap_or("removed"));
             }
         }
-        GroupCmd::Start {
-            group,
+        ProxyGroupCmd::Start {
+            name,
             place_id,
             private_server_code,
             mode,
         } => {
-            let v: Value = cl.call(Request::GroupStart {
-                group,
+            let v: Value = cl.call(Request::ProxyGroupStart {
+                name,
                 place_id,
                 private_server_code,
                 mode,
             })?;
-            if ctx.out.json {
-                ctx.out.value(&v);
-            } else {
-                let q = v["queued"].as_array().map(|a| a.len()).unwrap_or(0);
-                println!("{q} queued in group {}; starts are paced by the scheduler (see `hrdctl status`)", v["group"].as_str().unwrap_or(""));
-                for s in v["skipped"].as_array().into_iter().flatten() {
-                    println!(
-                        "  skipped {}: {}",
-                        s["account"].as_str().unwrap_or("?"),
-                        s["reason"].as_str().unwrap_or("?")
-                    );
-                }
+            print_start(ctx, &v, "proxy_group", "proxy group");
+        }
+        ProxyGroupCmd::Stop { name, force } => {
+            let v: Value = cl.call(Request::ProxyGroupStop { name, force })?;
+            print_stop(ctx, &v);
+        }
+    }
+    Ok(())
+}
+
+pub fn print_assign(ctx: &Ctx, v: &Value) {
+    if ctx.out.json {
+        ctx.out.value(v);
+    } else if v["proxy_group"].is_null() {
+        println!(
+            "{} account(s) taken out of their proxy group",
+            v["assigned"]
+        );
+    } else {
+        println!(
+            "proxy group {}: {} assigned, {} already there, {} registered, {} members now",
+            v["proxy_group"].as_str().unwrap_or(""),
+            v["assigned"],
+            v["unchanged"],
+            v["created"],
+            v["members"]
+        );
+    }
+}
+
+/// The hierarchy, indented: each group with its place, the proxy groups in it,
+/// the accounts in those, and then the accounts that are in none.
+pub fn tree(ctx: &Ctx) -> Result<()> {
+    let o: OverviewView = ctx.client()?.call(Request::Overview)?;
+    if ctx.out.json {
+        ctx.out.data(&o);
+        return Ok(());
+    }
+    if o.groups.is_empty() && o.unassigned.is_empty() {
+        println!("nothing yet: hrdctl group create NAME --place-id N");
+    }
+    for g in &o.groups {
+        let v = &g.group;
+        println!(
+            "{}  place {}  mode {}  ({} account(s), {} live)",
+            v.name,
+            opt(&v.place_id),
+            v.mode.map(|m| m.as_str()).unwrap_or("-"),
+            v.accounts,
+            v.live
+        );
+        if g.proxy_groups.is_empty() {
+            println!(
+                "  (no proxy groups: hrdctl proxy-group create NAME --group {} --capacity N)",
+                v.name
+            );
+        }
+        for p in &g.proxy_groups {
+            let pv = &p.proxy_group;
+            println!(
+                "  {}  proxy {}  {}  {}/{} account(s)",
+                pv.name,
+                opt(&pv.network),
+                pv.network_ready
+                    .map(|r| format!("{r:?}").to_lowercase())
+                    .unwrap_or_else(|| "no proxy".into()),
+                pv.assigned,
+                pv.capacity
+            );
+            for a in &p.accounts {
+                println!("    {}  {}", a.id, a.state);
             }
         }
+    }
+    if !o.unassigned.is_empty() {
+        println!("(in no group)");
+        for a in &o.unassigned {
+            println!("  {}  {}", a.id, a.state);
+        }
+    }
+    if !o.free_networks.is_empty() {
+        let free: Vec<String> = o
+            .free_networks
+            .iter()
+            .map(|n| n.network.name.to_string())
+            .collect();
+        println!("proxies not used by any proxy group: {}", free.join(", "));
     }
     Ok(())
 }
@@ -180,14 +410,14 @@ pub fn instance(ctx: &Ctx, c: InstanceCmd) -> Result<()> {
         InstanceCmd::Start {
             account,
             place_id,
-            group,
+            proxy_group,
             private_server_code,
             mode,
         } => {
             let v: InstanceView = cl.call(Request::InstanceStart {
                 account,
                 place_id,
-                group,
+                proxy_group,
                 private_server_code,
                 mode,
             })?;
@@ -236,8 +466,9 @@ pub fn instance(ctx: &Ctx, c: InstanceCmd) -> Result<()> {
                 v.reason.clone().unwrap_or_default()
             );
             println!(
-                "  group {}  place {}  run {}  mode {}  runtime {}",
+                "  group {}  proxy group {}  place {}  run {}  mode {}  runtime {}",
                 opt(&v.group),
+                opt(&v.proxy_group),
                 opt(&v.place_id),
                 v.run,
                 v.mode.as_str(),
@@ -338,6 +569,7 @@ pub fn status(ctx: &Ctx, a: StatusArgs) -> Result<()> {
         filter: Filter {
             states,
             group: a.group,
+            proxy_group: a.proxy_group,
             label: a.label,
             accounts: a.accounts,
         },
@@ -357,6 +589,7 @@ pub fn status(ctx: &Ctx, a: StatusArgs) -> Result<()> {
                 i.id.to_string(),
                 i.state.to_string(),
                 opt(&i.group),
+                opt(&i.proxy_group),
                 opt(&i.place_id),
                 age(i.uptime_s),
                 mib(i.mem.as_ref().and_then(|m| m.rss_bytes)),
@@ -374,9 +607,20 @@ pub fn status(ctx: &Ctx, a: StatusArgs) -> Result<()> {
     print!(
         "{}",
         table(
-            &["ID", "STATE", "GROUP", "PLACE", "UP", "RSS MiB", "PSS MiB", "CPU%", "WHY"],
+            &[
+                "ID",
+                "STATE",
+                "GROUP",
+                "PROXY GROUP",
+                "PLACE",
+                "UP",
+                "RSS MiB",
+                "PSS MiB",
+                "CPU%",
+                "WHY"
+            ],
             &rows,
-            &[4, 5, 6, 7]
+            &[5, 6, 7, 8]
         )
     );
     let summary: Vec<String> = State::ALL
@@ -473,7 +717,7 @@ pub fn stats(ctx: &Ctx, per_instance: bool) -> Result<()> {
     }
     for (g, n) in &s.network {
         println!(
-            "group {g}: rx {}  tx {}",
+            "proxy group {g}: rx {}  tx {}",
             mib_long(n.rx_bytes),
             mib_long(n.tx_bytes)
         );
@@ -569,7 +813,7 @@ pub fn queue(ctx: &Ctx, c: QueueCmd) -> Result<()> {
                         vec![
                             opt(&i.queue_position),
                             i.id.to_string(),
-                            opt(&i.group),
+                            opt(&i.proxy_group),
                             opt(&i.place_id),
                             i.reason.clone().unwrap_or_default(),
                         ]
@@ -577,7 +821,11 @@ pub fn queue(ctx: &Ctx, c: QueueCmd) -> Result<()> {
                     .collect();
                 print!(
                     "{}",
-                    table(&["#", "ID", "GROUP", "PLACE", "WHY WAITING"], &rows, &[0])
+                    table(
+                        &["#", "ID", "PROXY GROUP", "PLACE", "WHY WAITING"],
+                        &rows,
+                        &[0]
+                    )
                 );
             }
         }

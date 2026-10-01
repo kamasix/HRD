@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::ids::{AccountName, GroupName, NetworkName, PlaceId};
+use crate::ids::{AccountName, GroupName, NetworkName, PlaceId, ProxyGroupName};
 use crate::model::{AuthStatus, InstanceRecord, Network, Readiness, ResourceMode, RunKind, State};
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -55,7 +55,7 @@ pub enum Request {
         name: AccountName,
         labels: Vec<String>,
         note: Option<String>,
-        group: Option<GroupName>,
+        proxy_group: Option<ProxyGroupName>,
     },
     AccountList,
     AccountSet {
@@ -104,28 +104,67 @@ pub enum Request {
         replace: bool,
     },
 
-    // -- groups -----------------------------------------------------------
+    // -- groups: a name, a place, a mode and the proxy groups inside ------
     GroupCreate {
         name: GroupName,
+        place_id: Option<PlaceId>,
+        mode: Option<ResourceMode>,
+        note: Option<String>,
+    },
+    GroupList,
+    GroupSet {
+        name: GroupName,
+        place_id: Option<PlaceId>,
+        #[serde(default)]
+        clear_place_id: bool,
+        mode: Option<ResourceMode>,
+        #[serde(default)]
+        clear_mode: bool,
+        note: Option<String>,
+    },
+    /// Refused while the group still holds proxy groups, unless `cascade`: then
+    /// they are removed with it. Their accounts and their networks stay.
+    GroupRemove {
+        name: GroupName,
+        #[serde(default)]
+        cascade: bool,
+    },
+
+    // -- proxy groups: one proxy (a network) and the accounts behind it ---
+    ProxyGroupCreate {
+        name: ProxyGroupName,
+        group: GroupName,
         network: Option<NetworkName>,
         capacity: u32,
         note: Option<String>,
     },
-    GroupList,
-    GroupAssign {
-        group: GroupName,
-        accounts: Vec<AccountName>,
-        create_missing: bool,
+    ProxyGroupList {
+        group: Option<GroupName>,
     },
-    GroupRemove {
-        name: GroupName,
-    },
-    GroupSet {
-        name: GroupName,
+    ProxyGroupSet {
+        name: ProxyGroupName,
+        /// Move it to another group.
+        group: Option<GroupName>,
         capacity: Option<u32>,
         network: Option<NetworkName>,
+        #[serde(default)]
         clear_network: bool,
         note: Option<String>,
+    },
+    /// Refused while accounts are assigned, unless `unassign`: then they stay
+    /// registered and lose only the assignment.
+    ProxyGroupRemove {
+        name: ProxyGroupName,
+        #[serde(default)]
+        unassign: bool,
+    },
+    /// Put accounts into a proxy group, or take them out of theirs
+    /// (`proxy_group: None`).
+    AccountAssign {
+        accounts: Vec<AccountName>,
+        proxy_group: Option<ProxyGroupName>,
+        #[serde(default)]
+        create_missing: bool,
     },
 
     // -- networks ---------------------------------------------------------
@@ -153,10 +192,11 @@ pub enum Request {
     },
 
     // -- instances --------------------------------------------------------
+    /// `place_id` of `None` means the place of the account's group.
     InstanceStart {
         account: AccountName,
-        place_id: PlaceId,
-        group: Option<GroupName>,
+        place_id: Option<PlaceId>,
+        proxy_group: Option<ProxyGroupName>,
         private_server_code: Option<String>,
         mode: Option<ResourceMode>,
     },
@@ -164,11 +204,32 @@ pub enum Request {
         id: AccountName,
         force: bool,
     },
+    /// Queue every account of every proxy group of the group. `place_id` of
+    /// `None` means the group's own place.
     GroupStart {
         group: GroupName,
-        place_id: PlaceId,
+        place_id: Option<PlaceId>,
         private_server_code: Option<String>,
         mode: Option<ResourceMode>,
+    },
+    /// Queue every account of one proxy group, at its group's place unless
+    /// `place_id` says otherwise.
+    ProxyGroupStart {
+        name: ProxyGroupName,
+        place_id: Option<PlaceId>,
+        private_server_code: Option<String>,
+        mode: Option<ResourceMode>,
+    },
+    /// Stop (or cancel, if still queued) everything running in the group.
+    GroupStop {
+        name: GroupName,
+        #[serde(default)]
+        force: bool,
+    },
+    ProxyGroupStop {
+        name: ProxyGroupName,
+        #[serde(default)]
+        force: bool,
     },
     StopAll {
         force: bool,
@@ -180,6 +241,10 @@ pub enum Request {
     },
 
     // -- observation ------------------------------------------------------
+    /// The whole hierarchy in one consistent snapshot: groups, their proxy
+    /// groups and the accounts in them, the accounts that are in none, and the
+    /// proxies no proxy group uses.
+    Overview,
     Status {
         filter: Filter,
     },
@@ -333,8 +398,11 @@ pub struct ImportFile {
 pub struct Filter {
     #[serde(default)]
     pub states: Vec<State>,
+    /// Accounts whose proxy group is part of this group.
     #[serde(default)]
     pub group: Option<GroupName>,
+    #[serde(default)]
+    pub proxy_group: Option<ProxyGroupName>,
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
@@ -429,7 +497,9 @@ pub struct InstanceView {
     pub id: AccountName,
     pub state: State,
     pub reason: Option<String>,
+    /// The group the account's proxy group belongs to.
     pub group: Option<GroupName>,
+    pub proxy_group: Option<ProxyGroupName>,
     pub place_id: Option<PlaceId>,
     pub run: u64,
     pub runtime: Option<String>,
@@ -556,6 +626,7 @@ pub struct AccountView {
     pub name: AccountName,
     pub labels: Vec<String>,
     pub group: Option<GroupName>,
+    pub proxy_group: Option<ProxyGroupName>,
     pub note: Option<String>,
     pub auth: AuthStatus,
     pub auth_detail: Option<String>,
@@ -568,11 +639,28 @@ pub struct AccountView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupView {
     pub name: GroupName,
+    pub place_id: Option<PlaceId>,
+    pub mode: Option<ResourceMode>,
+    pub note: Option<String>,
+    pub proxy_groups: u32,
+    /// Accounts in all of its proxy groups.
+    pub accounts: u32,
+    /// Of those, queued, starting, joining, connected or unknown.
+    pub live: u32,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyGroupView {
+    pub name: ProxyGroupName,
+    pub group: GroupName,
     pub network: Option<NetworkName>,
     pub capacity: u32,
     pub assigned: u32,
     pub live: u32,
     pub network_ready: Option<Readiness>,
+    /// Why the network is not `ready`, when it is not.
+    pub network_reason: Option<String>,
     pub note: Option<String>,
 }
 
@@ -581,11 +669,38 @@ pub struct NetworkView {
     pub network: Network,
     pub readiness: Readiness,
     pub reason: Option<String>,
-    pub groups: Vec<GroupName>,
+    /// The proxy group that uses it, if any (a network carries at most one).
+    pub proxy_groups: Vec<ProxyGroupName>,
     pub assigned_clients: u32,
     pub latest_handshake_age_s: Measured<u64>,
     pub rx_bytes: Measured<u64>,
     pub tx_bytes: Measured<u64>,
+}
+
+/// The hierarchy as the operator sees it, read under one lock so that it is
+/// consistent: nothing is listed in two places and nothing is missing between
+/// two calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewView {
+    pub groups: Vec<GroupNode>,
+    /// Accounts that are in no proxy group.
+    pub unassigned: Vec<InstanceView>,
+    /// Defined proxies (networks) that no proxy group uses yet.
+    pub free_networks: Vec<NetworkView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupNode {
+    pub group: GroupView,
+    pub proxy_groups: Vec<ProxyGroupNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyGroupNode {
+    pub proxy_group: ProxyGroupView,
+    /// The proxy itself, when the proxy group has one.
+    pub network: Option<NetworkView>,
+    pub accounts: Vec<InstanceView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -593,8 +708,10 @@ pub struct ExportedAccount {
     pub name: AccountName,
     #[serde(default)]
     pub labels: Vec<String>,
-    #[serde(default)]
-    pub group: Option<GroupName>,
+    /// Exports made before the split called this `group`; the names are the
+    /// same ones, because an upgrade keeps them.
+    #[serde(default, alias = "group")]
+    pub proxy_group: Option<ProxyGroupName>,
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
@@ -647,7 +764,7 @@ pub struct StatsView {
     pub mem_available_bytes: Measured<u64>,
     pub memory_pressure_some_avg10: Measured<f64>,
     pub cache_disk_bytes: Measured<u64>,
-    /// Bytes through each group's tunnel, if the helper could be asked.
+    /// Bytes through each proxy group's tunnel, if the helper could be asked.
     pub network: BTreeMap<String, NetTraffic>,
     /// Kernel same-page merging counters, present only when KSM is on.
     pub ksm: Option<KsmView>,
@@ -712,8 +829,8 @@ mod tests {
             id: 7,
             request: Request::InstanceStart {
                 account: AccountName::new("alt-1").unwrap(),
-                place_id: PlaceId::new(920587237).unwrap(),
-                group: None,
+                place_id: Some(PlaceId::new(920587237).unwrap()),
+                proxy_group: None,
                 private_server_code: None,
                 mode: Some(ResourceMode::Minimal),
             },

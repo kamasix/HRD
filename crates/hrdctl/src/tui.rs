@@ -292,7 +292,16 @@ fn draw(f: &mut Frame, app: &mut App) {
     );
 
     let header = Row::new([
-        "ID", "STATE", "GROUP", "PLACE", "UP", "RSS MiB", "PSS MiB", "CPU%", "WHY",
+        "ID",
+        "STATE",
+        "GROUP",
+        "PROXY GROUP",
+        "PLACE",
+        "UP",
+        "RSS MiB",
+        "PSS MiB",
+        "CPU%",
+        "WHY",
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
     let rows: Vec<Row> = app
@@ -304,6 +313,7 @@ fn draw(f: &mut Frame, app: &mut App) {
                 i.id.to_string(),
                 i.state.to_string(),
                 opt(&i.group),
+                opt(&i.proxy_group),
                 opt(&i.place_id),
                 age(i.uptime_s),
                 mib(m.rss_bytes),
@@ -317,7 +327,8 @@ fn draw(f: &mut Frame, app: &mut App) {
     let widths = [
         Constraint::Length(20),
         Constraint::Length(13),
-        Constraint::Length(10),
+        Constraint::Length(12),
+        Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Length(8),
         Constraint::Length(8),
@@ -404,7 +415,7 @@ fn draw(f: &mut Frame, app: &mut App) {
             let s = &d.record.signals;
             let mut t = vec![
                 Line::from(vec![Span::styled(v.id.to_string(), Style::default().add_modifier(Modifier::BOLD)), Span::raw(format!("  {}  {}", v.state, v.reason.clone().unwrap_or_default()))]),
-                Line::from(format!("group {}  place {}  run {}  mode {}  runtime {}", opt(&v.group), opt(&v.place_id), v.run, v.mode.as_str(), opt(&v.runtime))),
+                Line::from(format!("group {}  proxy group {}  place {}  run {}  mode {}  runtime {}", opt(&v.group), opt(&v.proxy_group), opt(&v.place_id), v.run, v.mode.as_str(), opt(&v.runtime))),
                 Line::from(format!("signals: loaded {}  signed-in {}  connected {}  disconnected {}  code {}  screen {}", opt(&s.engine_loaded_at), opt(&s.signed_in_at), opt(&s.connected_at), opt(&s.disconnected_at), opt(&s.disconnect_code), opt(&s.screen))),
             ];
             if let Some(m) = &v.mem {

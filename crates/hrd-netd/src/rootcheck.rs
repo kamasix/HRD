@@ -14,7 +14,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::process::Command;
 
-use hrd_core::ids::{GroupName, NetworkName};
+use hrd_core::ids::{NetworkName, ProxyGroupName};
 use hrd_core::layout::Layout;
 use hrd_core::model::Ipv6Policy;
 use hrd_net::base64;
@@ -77,7 +77,7 @@ fn a_namespace_has_one_way_out_and_it_is_the_tunnel_interface() {
     let net_name = NetworkName::new("t1").unwrap();
     env.store.put(&net_name, &conf(), &[]).unwrap();
     let net = env.store.get(&net_name).unwrap();
-    let group = GroupName::new("gt1").unwrap();
+    let group = ProxyGroupName::new("gt1").unwrap();
     let spec = GroupSpec {
         group: group.clone(),
         network: net_name.clone(),

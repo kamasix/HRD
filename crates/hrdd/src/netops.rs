@@ -1,13 +1,14 @@
-//! The daemon's side of network groups: turning the registry into requests for
+//! The daemon's side of proxy groups: turning the registry into requests for
 //! the helper, and the helper's status into a readiness the operator can read.
 //!
-//! The daemon only ever *names* things to the helper: which group leaves
+//! The daemon only ever *names* things to the helper: which proxy group leaves
 //! through which network. Addresses, keys, routes and commands are derived
-//! inside the helper from what it stored itself.
+//! inside the helper from what it stored itself. (In the helper's own protocol
+//! the word for a proxy group is "group": one namespace and one tunnel.)
 
 use std::path::Path;
 
-use hrd_core::ids::{GroupName, NetworkName};
+use hrd_core::ids::{NetworkName, ProxyGroupName};
 use hrd_core::layout::Layout;
 use hrd_core::model::Readiness;
 use hrd_core::time::now_unix;
@@ -17,9 +18,9 @@ use hrd_net::proto::{ApplyOutcome, GroupStatus, NetdRequest, PlanReply, StunResu
 
 use crate::state::{Daemon, Inner};
 
-/// Is there a live namespace handle for the group? The helper creates it; the
-/// entry wrapper re-checks it before every start.
-pub fn namespace_present(layout: &Layout, g: &GroupName) -> bool {
+/// Is there a live namespace handle for the proxy group? The helper creates it;
+/// the entry wrapper re-checks it before every start.
+pub fn namespace_present(layout: &Layout, g: &ProxyGroupName) -> bool {
     is_nsfs(&layout.netns_file(g))
 }
 
@@ -32,7 +33,7 @@ fn is_nsfs(p: &Path) -> bool {
 pub fn specs(inner: &Inner) -> Vec<GroupSpec> {
     inner
         .reg
-        .groups
+        .proxy_groups
         .values()
         .filter_map(|g| {
             let n = g.network.as_ref()?;
@@ -46,11 +47,11 @@ pub fn specs(inner: &Inner) -> Vec<GroupSpec> {
         .collect()
 }
 
-fn live_in_group(inner: &Inner, g: &GroupName) -> usize {
+fn live_in_group(inner: &Inner, g: &ProxyGroupName) -> usize {
     inner
         .live
         .values()
-        .filter(|l| l.rec.group.as_ref() == Some(g) && l.busy())
+        .filter(|l| l.rec.proxy_group.as_ref() == Some(g) && l.busy())
         .count()
 }
 
@@ -67,7 +68,7 @@ pub fn apply(d: &Daemon, prune: bool) -> Result<Vec<ApplyOutcome>> {
         let inner = d.lock();
         let specs = specs(&inner);
         // A rebuild cuts live clients off; only groups with none may be rebuilt.
-        let ok: Vec<GroupName> = specs
+        let ok: Vec<ProxyGroupName> = specs
             .iter()
             .filter(|s| live_in_group(&inner, &s.group) == 0)
             .map(|s| s.group.clone())
@@ -83,7 +84,7 @@ pub fn apply(d: &Daemon, prune: bool) -> Result<Vec<ApplyOutcome>> {
     Ok(out)
 }
 
-pub fn status_of(d: &Daemon, groups: Vec<GroupName>) -> Result<Vec<GroupStatus>> {
+pub fn status_of(d: &Daemon, groups: Vec<ProxyGroupName>) -> Result<Vec<GroupStatus>> {
     // A short timeout: a hung helper must not stall whoever asks.
     d.netd
         .clone()
@@ -94,7 +95,7 @@ pub fn status_of(d: &Daemon, groups: Vec<GroupName>) -> Result<Vec<GroupStatus>>
 /// Ask the helper about every group and cache the answer. Never called with the
 /// state lock held.
 pub fn refresh(d: &Daemon) {
-    let groups: Vec<GroupName> = d.lock().reg.groups.keys().cloned().collect();
+    let groups: Vec<ProxyGroupName> = d.lock().reg.proxy_groups.keys().cloned().collect();
     if groups.is_empty() {
         return;
     }
@@ -117,15 +118,15 @@ pub fn refresh(d: &Daemon) {
 pub fn readiness(
     inner: &Inner,
     handshake_max_age_s: u64,
-    g: &GroupName,
+    g: &ProxyGroupName,
 ) -> (Readiness, Option<String>) {
-    let Some(group) = inner.reg.groups.get(g) else {
+    let Some(group) = inner.reg.proxy_groups.get(g) else {
         return (Readiness::Unknown, None);
     };
     if group.network.is_none() {
         return (
             Readiness::NotApplied,
-            Some("the group has no network".into()),
+            Some("the proxy group has no proxy".into()),
         );
     }
     if let Some((at, e)) = &inner.net_error {
@@ -140,7 +141,7 @@ pub fn readiness(
         None => (Readiness::Unknown, Some("not checked yet".into())),
         Some((_, st)) if !st.namespace_present => (
             Readiness::NotApplied,
-            Some("the namespace does not exist: run `hrdctl network apply`".into()),
+            Some("the namespace does not exist: run `hrdctl proxy apply`".into()),
         ),
         Some((_, st)) if !st.interface_present || !st.link_up || !st.problems.is_empty() => (
             Readiness::Broken,
@@ -169,8 +170,8 @@ pub fn readiness(
     }
 }
 
-/// Probe a network from inside its group's namespace and record what the far
-/// end saw as the *observed* exit, alongside (never replacing) the configured one.
+/// Probe a network from inside its proxy group's namespace and record what the
+/// far end saw as the *observed* exit, alongside (never replacing) the configured one.
 pub fn check(d: &Daemon, name: &NetworkName) -> Result<serde_json::Value> {
     let (group, server) = {
         let inner = d.lock();
@@ -181,13 +182,13 @@ pub fn check(d: &Daemon, name: &NetworkName) -> Result<serde_json::Value> {
             .ok_or_else(|| Error::not_found(format!("no network {name}")))?;
         let group = inner
             .reg
-            .groups
+            .proxy_groups
             .values()
             .find(|g| g.network.as_ref() == Some(name))
             .map(|g| g.name.clone())
-            .ok_or_else(|| Error::conflict(format!("network {name} is not used by any group; assign it with `group create --network`")))?;
+            .ok_or_else(|| Error::conflict(format!("proxy {name} is not used by any proxy group; give it one with `hrdctl proxy-group create --proxy {name}`")))?;
         let server = net.stun_server.clone().ok_or_else(|| {
-            Error::invalid(format!("network {name} has no stun_server: the manager contacts only servers you name (`hrdctl network set {name} --stun-server HOST:PORT`)"))
+            Error::invalid(format!("proxy {name} has no stun_server: the manager contacts only servers you name (`hrdctl proxy set {name} --stun-server HOST:PORT`)"))
         })?;
         (group, server)
     };
@@ -211,7 +212,7 @@ pub fn check(d: &Daemon, name: &NetworkName) -> Result<serde_json::Value> {
     d.save_registry(&inner)?;
     let matches = configured.map(|c| c == r.address);
     Ok(serde_json::json!({
-        "network": name, "group": group,
+        "network": name, "proxy_group": group,
         "observed": r.address.to_string(), "via": "stun (UDP)", "server": r.server,
         "configured": configured.map(|c| c.to_string()),
         "matches_configured": matches,

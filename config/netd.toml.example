@@ -1,6 +1,11 @@
-# hrd-netd.toml: read by the privileged helper.
+# /etc/cordial-hrd/netd.toml: read by the privileged helper (hrd-netd).
 # service_user / service_group: who may use the helper (the daemon runs as this user)
-# apply_on_start: apply every group when the helper starts. Off: applying is always an explicit command.
+# apply_on_start: apply every proxy group when the helper starts. Off: applying is always an explicit command.
 service_user = "cordial"
 service_group = "cordial"
 apply_on_start = false
+# allow_service_define: let the service user, and so the web panel, define a proxy (hand the
+# helper a WireGuard file with its private key). Off: only root can (`sudo hrdctl proxy add`).
+# Whoever may define a proxy decides where the traffic of every account behind it goes, so
+# turn this on only if you trust everyone who can sign in to the panel. Restart hrd-netd after.
+allow_service_define = false

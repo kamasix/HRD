@@ -12,7 +12,7 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-use hrd_core::ids::{GroupName, NetworkName};
+use hrd_core::ids::{NetworkName, ProxyGroupName};
 use hrd_core::model::Ipv6Policy;
 
 use crate::ipnet::IpNet;
@@ -49,19 +49,19 @@ pub enum NetdRequest {
     Apply {
         groups: Vec<GroupSpec>,
         prune: bool,
-        allow_disruptive: Vec<GroupName>,
+        allow_disruptive: Vec<ProxyGroupName>,
     },
     Teardown {
-        group: GroupName,
+        group: ProxyGroupName,
         allow_disruptive: bool,
     },
     Status {
-        groups: Vec<GroupName>,
+        groups: Vec<ProxyGroupName>,
     },
     /// Send one UDP question from inside the group's namespace and report the
     /// address the far end saw.
     ProbeStun {
-        group: GroupName,
+        group: ProxyGroupName,
         server: String,
     },
 }
@@ -85,7 +85,7 @@ pub struct NetworkSummary {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GroupStatus {
-    pub group: Option<GroupName>,
+    pub group: Option<ProxyGroupName>,
     pub network: Option<NetworkName>,
     pub namespace_present: bool,
     pub interface_present: bool,
@@ -111,7 +111,7 @@ pub struct StunResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyOutcome {
-    pub group: GroupName,
+    pub group: ProxyGroupName,
     pub ok: bool,
     pub action: crate::plan::Action,
     pub message: String,
@@ -122,5 +122,5 @@ pub struct PlanReply {
     pub plan: Plan,
     /// The same steps as text, with the helper's directories filled in.
     pub text: Vec<String>,
-    pub ipv6: Vec<(GroupName, Ipv6Policy)>,
+    pub ipv6: Vec<(ProxyGroupName, Ipv6Policy)>,
 }

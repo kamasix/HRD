@@ -26,6 +26,7 @@ pub fn info(d: &Daemon) -> Result<Value> {
         "uptime_s": now_unix().saturating_sub(d.started_at),
         "accounts": inner.reg.accounts.len(),
         "groups": inner.reg.groups.len(),
+        "proxy_groups": inner.reg.proxy_groups.len(),
         "networks": inner.reg.networks.len(),
         "queued": inner.queue.len(),
         "states": by_state,
@@ -75,7 +76,7 @@ pub fn checks(d: &Daemon) -> Vec<Check> {
             "network helper",
             CheckStatus::Warn,
             e.to_string(),
-            Some("systemctl start hrd-netd (only needed for network groups)"),
+            Some("systemctl start hrd-netd (only needed for proxy groups)"),
         ),
     });
     let s = d.secrets.status();

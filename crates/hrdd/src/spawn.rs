@@ -113,7 +113,7 @@ pub struct Inputs<'a> {
     pub place: Option<PlaceId>,
     pub private_server_code: Option<&'a str>,
     pub mode: ResourceMode,
-    pub group: Option<&'a hrd_core::ids::GroupName>,
+    pub proxy_group: Option<&'a hrd_core::ids::ProxyGroupName>,
     /// `builds/<version>` of the runtime this run uses.
     pub build_dir: &'a Path,
     pub graphics: &'a GraphicsChoice,
@@ -151,15 +151,15 @@ pub fn build(i: &Inputs<'_>) -> Result<Plan> {
     let mut env: Vec<(String, String)> = Vec::new();
     let mut put = |k: &str, v: String| env.push((k.to_string(), v));
 
-    // The entry wrapper first: it enters the group's namespace, then execs the
-    // client. Without a group there is no wrapper and no namespace, which is
-    // only reachable with `network.allow_unrouted`.
-    let (program, prefix): (PathBuf, Vec<OsString>) = match i.group {
+    // The entry wrapper first: it enters the proxy group's namespace, then execs
+    // the client. Without a proxy group there is no wrapper and no namespace,
+    // which is only reachable with `network.allow_unrouted`.
+    let (program, prefix): (PathBuf, Vec<OsString>) = match i.proxy_group {
         Some(g) => (
             PathBuf::from(&cfg.engine.enter),
             vec![
                 "run".into(),
-                "--group".into(),
+                "--proxy-group".into(),
                 g.as_str().into(),
                 "--".into(),
                 (&cfg.engine.cordial_run).into(),
@@ -450,7 +450,7 @@ mod tests {
         l: &'a Layout,
         a: &'a AccountName,
         g: &'a GraphicsChoice,
-        gn: Option<&'a hrd_core::ids::GroupName>,
+        gn: Option<&'a hrd_core::ids::ProxyGroupName>,
         build: &'a Path,
     ) -> Inputs<'a> {
         Inputs {
@@ -461,7 +461,7 @@ mod tests {
             place: PlaceId::new(920587237).ok(),
             private_server_code: None,
             mode: ResourceMode::Compatible,
-            group: gn,
+            proxy_group: gn,
             build_dir: build,
             graphics: g,
             lavapipe_icd: Some(Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json")),
@@ -475,7 +475,7 @@ mod tests {
         let cfg = Config::default();
         let l = Layout::system();
         let a = AccountName::new("alt-1").unwrap();
-        let g = hrd_core::ids::GroupName::new("g01").unwrap();
+        let g = hrd_core::ids::ProxyGroupName::new("g01").unwrap();
         let gr = GraphicsChoice {
             software: true,
             why: String::new(),
@@ -497,7 +497,13 @@ mod tests {
             .collect();
         assert_eq!(
             &argv[..5],
-            ["run", "--group", "g01", "--", "/usr/lib/hrd/cordial-run"]
+            [
+                "run",
+                "--proxy-group",
+                "g01",
+                "--",
+                "/usr/lib/hrd/cordial-run"
+            ]
         );
         assert!(argv.contains(&"--headless".to_string()));
         assert!(argv.windows(2).any(|w| w == ["--profile", "default"]));

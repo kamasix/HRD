@@ -1,12 +1,12 @@
 //! `hrd-netd`: the privileged half of network groups.
 //!
 //! It does four things: stores WireGuard configurations the operator imported,
-//! creates a namespace per group with a tunnel and a default-drop firewall in
+//! creates a namespace per proxy group with a tunnel and a default-drop firewall in
 //! it, reports how they are, and removes them. It runs as root because those
 //! need `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`; everything else about it is
 //! chosen to keep that from being a way in:
 //!
-//! * the request vocabulary names groups and networks and nothing else;
+//! * the request vocabulary names proxy groups and networks and nothing else;
 //! * the three tools it executes are found in system directories and refused if
 //!   they are not root-owned;
 //! * commands are argument vectors with a cleared environment, never a shell;
@@ -101,6 +101,7 @@ fn run() -> Result<()> {
         },
         write_lock: Mutex::new(()),
         allowed_uids: vec![uid],
+        service_may_define: cfg.allow_service_define,
     });
 
     if cfg.apply_on_start {

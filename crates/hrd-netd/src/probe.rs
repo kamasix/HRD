@@ -4,7 +4,7 @@ use std::io::Read;
 use std::net::{IpAddr, ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::{Error, Result};
 use hrd_net::proto::StunResult;
 use hrd_net::stun;
@@ -20,7 +20,7 @@ fn txid() -> [u8; 12] {
     b
 }
 
-pub fn stun_probe(env: &Env, group: &GroupName, server: &str) -> Result<StunResult> {
+pub fn stun_probe(env: &Env, group: &ProxyGroupName, server: &str) -> Result<StunResult> {
     if server.is_empty()
         || server.len() > 253
         || !server

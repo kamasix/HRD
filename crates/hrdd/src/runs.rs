@@ -358,7 +358,7 @@ fn set_limits(d: &Daemon, cg: &Cgroup, cfg: &Config) {
 pub fn spawn_run(d: &Daemon, inner: &mut Inner, id: &AccountName) -> Result<()> {
     let cfg = d.cfg();
     let build = crate::runtime::current(&d.layout)?;
-    let (kind, place, mode, group, run, code) = {
+    let (kind, place, mode, proxy_group, run, code) = {
         let l = inner
             .live
             .get(id)
@@ -367,21 +367,21 @@ pub fn spawn_run(d: &Daemon, inner: &mut Inner, id: &AccountName) -> Result<()> 
             l.rec.kind,
             l.rec.place_id,
             l.rec.mode,
-            l.rec.group.clone(),
+            l.rec.proxy_group.clone(),
             l.rec.run,
             l.tr_code(),
         )
     };
-    if let Some(g) = &group {
+    if let Some(g) = &proxy_group {
         // Fail closed before anything is created: the namespace must exist.
         if !crate::netops::namespace_present(&d.layout, g) {
             return Err(Error::unavailable(format!(
-                "group {g} has no network namespace: run `hrdctl network apply` (the client would otherwise use the host's network, so it was not started)"
+                "proxy group {g} has no network namespace: run `hrdctl proxy apply` (the client would otherwise use the host's network, so it was not started)"
             )));
         }
     } else if !cfg.network.allow_unrouted {
         return Err(Error::unavailable(
-            "the account has no group and network.allow_unrouted is off",
+            "the account has no proxy group and network.allow_unrouted is off",
         ));
     }
     let render = spawn::find_render_node();
@@ -431,7 +431,7 @@ pub fn spawn_run(d: &Daemon, inner: &mut Inner, id: &AccountName) -> Result<()> 
         place,
         private_server_code: code.as_deref(),
         mode,
-        group: group.as_ref(),
+        proxy_group: proxy_group.as_ref(),
         build_dir: &build.dir,
         graphics: &graphics,
         lavapipe_icd: icd.as_deref(),
@@ -516,10 +516,46 @@ pub fn apply_effects(d: &Daemon, inner: &mut Inner, id: &AccountName, fx: Vec<Ef
     }
 }
 
+/// The mode a run starts with: the one the request names, else the account's own,
+/// else its group's, else the daemon's default.
 pub fn default_mode(
     cfg: &Config,
     account_mode: Option<ResourceMode>,
+    group_mode: Option<ResourceMode>,
     asked: Option<ResourceMode>,
 ) -> ResourceMode {
-    asked.or(account_mode).unwrap_or(cfg.resources.default_mode)
+    asked
+        .or(account_mode)
+        .or(group_mode)
+        .unwrap_or(cfg.resources.default_mode)
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn a_requests_mode_wins_then_the_accounts_then_the_groups_then_the_default() {
+        let cfg = Config::default();
+        let (c, m, a) = (
+            ResourceMode::Compatible,
+            ResourceMode::Minimal,
+            ResourceMode::Aggressive,
+        );
+        assert_eq!(
+            default_mode(&cfg, None, None, None),
+            cfg.resources.default_mode
+        );
+        assert_eq!(default_mode(&cfg, None, Some(m), None), m, "the group's");
+        assert_eq!(
+            default_mode(&cfg, Some(a), Some(m), None),
+            a,
+            "the account's beats the group's"
+        );
+        assert_eq!(
+            default_mode(&cfg, Some(a), Some(m), Some(c)),
+            c,
+            "the request beats both"
+        );
+    }
 }

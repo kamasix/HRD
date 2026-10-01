@@ -2,7 +2,7 @@
 //!
 //! Everything goes through the daemon's control socket except the few commands
 //! that have to work without it (`init`, `doctor`, `gateway plan`) and
-//! `network add`, which hands a WireGuard key to the privileged helper directly
+//! `proxy add`, which hands a WireGuard key to the privileged helper directly
 //! so that the key never passes through the daemon.
 
 mod cmd_accounts;
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 
-use hrd_core::ids::{AccountName, GroupName, NetworkName, PlaceId};
+use hrd_core::ids::{AccountName, GroupName, NetworkName, PlaceId, ProxyGroupName};
 use hrd_core::layout::Layout;
 use hrd_core::model::{ResourceMode, State};
 use hrd_core::wire::Client;
@@ -62,12 +62,17 @@ enum Cmd {
     /// Register, sign in and remove accounts
     #[command(subcommand)]
     Account(AccountCmd),
-    /// WireGuard networks that groups leave through
-    #[command(subcommand)]
-    Network(NetworkCmd),
-    /// Groups of accounts sharing one exit
+    /// Groups: a name, the place its clients join, and the proxy groups inside
     #[command(subcommand)]
     Group(GroupCmd),
+    /// Proxy groups: one proxy and the accounts that leave through it
+    #[command(subcommand, visible_alias = "pg")]
+    ProxyGroup(ProxyGroupCmd),
+    /// Proxies: the WireGuard tunnels proxy groups leave through
+    #[command(subcommand, alias = "network")]
+    Proxy(ProxyCmd),
+    /// Groups, their proxy groups and the accounts in them, as one tree
+    Tree,
     /// Start and stop single clients
     #[command(subcommand)]
     Instance(InstanceCmd),
@@ -164,8 +169,20 @@ enum AccountCmd {
         labels: Vec<String>,
         #[arg(long)]
         note: Option<String>,
+        /// Put it straight into this proxy group
         #[arg(long)]
-        group: Option<GroupName>,
+        proxy_group: Option<ProxyGroupName>,
+    },
+    /// Put accounts into a proxy group (moving them out of the one they are in)
+    Assign {
+        proxy_group: ProxyGroupName,
+        #[arg(required = true)]
+        accounts: Vec<AccountName>,
+    },
+    /// Take accounts out of their proxy group (they stay registered)
+    Unassign {
+        #[arg(required = true)]
+        accounts: Vec<AccountName>,
     },
     /// Sign the account in on this machine (you type the password; it is not stored)
     Login {
@@ -181,8 +198,11 @@ enum AccountCmd {
         columns: u32,
     },
     List {
+        /// Only accounts in this group
         #[arg(long)]
         group: Option<GroupName>,
+        #[arg(long)]
+        proxy_group: Option<ProxyGroupName>,
         #[arg(long)]
         label: Option<String>,
     },
@@ -204,7 +224,7 @@ enum AccountCmd {
         #[arg(long)]
         yes: bool,
     },
-    /// Metadata only: names, labels, groups. Never a secret
+    /// Metadata only: names, labels, proxy groups. Never a secret
     Export {
         #[arg(long, value_name = "FILE")]
         file: Option<PathBuf>,
@@ -217,7 +237,7 @@ enum AccountCmd {
 }
 
 #[derive(Subcommand)]
-enum NetworkCmd {
+enum ProxyCmd {
     /// Import a WireGuard file. The key goes to the privileged helper (run as root)
     Add {
         name: NetworkName,
@@ -229,10 +249,10 @@ enum NetworkCmd {
         /// The public address you expect this tunnel to leave from
         #[arg(long)]
         exit_ip: Option<String>,
-        /// host:port of a STUN server you choose, for `network check`
+        /// host:port of a STUN server you choose, for `proxy check`
         #[arg(long)]
         stun_server: Option<String>,
-        /// Block IPv6 in the group even if the tunnel carries it
+        /// Block IPv6 in the proxy group even if the tunnel carries it
         #[arg(long)]
         block_ipv6: bool,
         #[arg(long)]
@@ -243,11 +263,11 @@ enum NetworkCmd {
     Plan,
     /// Make the system match the plan (namespaces, tunnels, firewall); run as root or the service user
     Apply {
-        /// Do not remove namespaces of groups that no longer exist
+        /// Do not remove namespaces of proxy groups that no longer exist
         #[arg(long)]
         no_prune: bool,
     },
-    /// Probe the exit from inside the group's namespace (needs a stun_server)
+    /// Probe the exit from inside the proxy group's namespace (needs a stun_server)
     Check {
         name: NetworkName,
     },
@@ -267,50 +287,131 @@ enum NetworkCmd {
 
 #[derive(Subcommand)]
 enum GroupCmd {
+    /// Create a group: a name and the place its clients join
     Create {
         name: GroupName,
+        /// The Roblox place every client of the group joins
         #[arg(long)]
-        network: Option<NetworkName>,
+        place_id: Option<PlaceId>,
+        /// Resource mode for the group's clients
+        #[arg(long)]
+        mode: Option<ResourceMode>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// List groups with their place and how many proxy groups and accounts they hold
+    List,
+    /// Change a group's place, mode or note
+    Set {
+        name: GroupName,
+        #[arg(long)]
+        place_id: Option<PlaceId>,
+        #[arg(long)]
+        clear_place_id: bool,
+        #[arg(long)]
+        mode: Option<ResourceMode>,
+        #[arg(long)]
+        clear_mode: bool,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Remove a group. Its accounts stay registered and its proxies stay defined
+    Remove {
+        name: GroupName,
+        /// Also remove the proxy groups inside it (otherwise it must be empty)
+        #[arg(long)]
+        cascade: bool,
+    },
+    /// Queue every account of every proxy group of the group
+    Start {
+        name: GroupName,
+        /// Join this place instead of the group's own
+        #[arg(long)]
+        place_id: Option<PlaceId>,
+        /// Private-server code; needs engine.join_url_via = "env"
+        #[arg(long)]
+        private_server_code: Option<String>,
+        #[arg(long)]
+        mode: Option<ResourceMode>,
+    },
+    /// Stop everything running in the group and cancel what is queued
+    Stop {
+        name: GroupName,
+        /// Kill at once instead of asking the clients to exit first
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProxyGroupCmd {
+    /// Create a proxy group inside a group, optionally with its proxy
+    Create {
+        name: ProxyGroupName,
+        /// The group it belongs to
+        #[arg(long)]
+        group: GroupName,
+        /// A proxy defined with `hrdctl proxy add` (one proxy belongs to one proxy group)
+        #[arg(long)]
+        proxy: Option<NetworkName>,
         /// How many accounts may be assigned: your own limit, not a platform number
         #[arg(long)]
         capacity: u32,
         #[arg(long)]
         note: Option<String>,
     },
-    /// Put the accounts listed in FILE (one name per line) into the group
+    /// Put the accounts listed in FILE (one name per line) into the proxy group
     Assign {
-        name: GroupName,
+        name: ProxyGroupName,
         #[arg(long, value_name = "FILE")]
         accounts: PathBuf,
         /// Register accounts that do not exist yet
         #[arg(long)]
         create_missing: bool,
     },
-    List,
+    /// List proxy groups with their proxy, accounts and how the proxy is doing
+    List {
+        /// Only the proxy groups of this group
+        #[arg(long)]
+        group: Option<GroupName>,
+    },
+    /// Move a proxy group to another group, change its capacity, proxy or note
     Set {
-        name: GroupName,
+        name: ProxyGroupName,
+        /// Move it to another group
+        #[arg(long)]
+        group: Option<GroupName>,
         #[arg(long)]
         capacity: Option<u32>,
         #[arg(long)]
-        network: Option<NetworkName>,
+        proxy: Option<NetworkName>,
         #[arg(long)]
-        clear_network: bool,
+        clear_proxy: bool,
         #[arg(long)]
         note: Option<String>,
     },
+    /// Remove a proxy group. Its accounts stay registered and its proxy stays defined
     Remove {
-        name: GroupName,
-    },
-    /// Queue every account of the group
-    Start {
-        group: GroupName,
+        name: ProxyGroupName,
+        /// Take its accounts out of it (otherwise it must be empty)
         #[arg(long)]
-        place_id: PlaceId,
-        /// Private-server code; needs engine.join_url_via = "env"
+        unassign: bool,
+    },
+    /// Queue every account of the proxy group, at its group's place
+    Start {
+        name: ProxyGroupName,
+        #[arg(long)]
+        place_id: Option<PlaceId>,
         #[arg(long)]
         private_server_code: Option<String>,
         #[arg(long)]
         mode: Option<ResourceMode>,
+    },
+    /// Stop everything running in the proxy group and cancel what is queued
+    Stop {
+        name: ProxyGroupName,
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -318,10 +419,11 @@ enum GroupCmd {
 enum InstanceCmd {
     Start {
         account: AccountName,
+        /// The place to join (default: the place of the account's group)
         #[arg(long)]
-        place_id: PlaceId,
+        place_id: Option<PlaceId>,
         #[arg(long)]
-        group: Option<GroupName>,
+        proxy_group: Option<ProxyGroupName>,
         #[arg(long)]
         private_server_code: Option<String>,
         #[arg(long)]
@@ -344,8 +446,11 @@ pub struct StatusArgs {
     /// Only instances that are queued, starting, joining, connected or unknown
     #[arg(long)]
     live: bool,
+    /// Only accounts in this group
     #[arg(long)]
     group: Option<GroupName>,
+    #[arg(long)]
+    proxy_group: Option<ProxyGroupName>,
     #[arg(long)]
     label: Option<String>,
     #[arg(long = "account")]
@@ -467,8 +572,10 @@ fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         Cmd::Doctor => cmd_basic::doctor(ctx),
         Cmd::Runtime(c) => cmd_net::runtime(ctx, c),
         Cmd::Account(c) => cmd_accounts::account(ctx, c),
-        Cmd::Network(c) => cmd_net::network(ctx, c),
+        Cmd::Proxy(c) => cmd_net::proxy(ctx, c),
         Cmd::Group(c) => cmd_fleet::group(ctx, c),
+        Cmd::ProxyGroup(c) => cmd_fleet::proxy_group(ctx, c),
+        Cmd::Tree => cmd_fleet::tree(ctx),
         Cmd::Instance(c) => cmd_fleet::instance(ctx, c),
         Cmd::StopAll { force } => cmd_fleet::stop_all(ctx, force),
         Cmd::Status(a) => cmd_fleet::status(ctx, a),

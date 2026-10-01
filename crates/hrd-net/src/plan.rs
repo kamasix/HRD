@@ -17,7 +17,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use hrd_core::ids::{GroupName, NetworkName};
+use hrd_core::ids::{NetworkName, ProxyGroupName};
 use hrd_core::model::Ipv6Policy;
 
 use crate::ipnet::IpNet;
@@ -29,7 +29,7 @@ pub const IFACE: &str = "wg0";
 /// What the operator asked for: this group leaves through this network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupSpec {
-    pub group: GroupName,
+    pub group: ProxyGroupName,
     pub network: NetworkName,
     pub ipv6: Ipv6Policy,
 }
@@ -53,56 +53,56 @@ pub struct NetworkFacts {
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum Step {
     CreateNetns {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     LoopbackUp {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     CreateWireguard {
-        group: GroupName,
+        group: ProxyGroupName,
         tmp: String,
     },
     MoveWireguard {
         tmp: String,
-        group: GroupName,
+        group: ProxyGroupName,
     },
     ConfigureWireguard {
-        group: GroupName,
+        group: ProxyGroupName,
         network: NetworkName,
     },
     FlushAddresses {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     AddAddress {
-        group: GroupName,
+        group: ProxyGroupName,
         addr: IpNet,
     },
     SetMtu {
-        group: GroupName,
+        group: ProxyGroupName,
         mtu: u16,
     },
     LinkUp {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     ReplaceDefaultRoute {
-        group: GroupName,
+        group: ProxyGroupName,
         v6: bool,
     },
     DisableIpv6 {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     InstallFirewall {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     WriteResolver {
-        group: GroupName,
+        group: ProxyGroupName,
         servers: Vec<IpAddr>,
     },
     WriteNsswitch {
-        group: GroupName,
+        group: ProxyGroupName,
     },
     RemoveNetns {
-        group: GroupName,
+        group: ProxyGroupName,
     },
 }
 
@@ -215,7 +215,7 @@ pub struct AppliedGroup {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(default)]
-    pub groups: BTreeMap<GroupName, AppliedGroup>,
+    pub groups: BTreeMap<ProxyGroupName, AppliedGroup>,
 }
 
 /// Decide whether a group's ipv6 is blocked, from the policy and the tunnel.
@@ -332,7 +332,7 @@ pub enum Action {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupPlan {
-    pub group: GroupName,
+    pub group: ProxyGroupName,
     pub action: Action,
     pub reason: String,
     /// Reconfiguring or removing a group that may have live clients interrupts
@@ -360,7 +360,7 @@ impl Plan {
 pub fn diff(
     specs: &[(GroupSpec, NetworkFacts)],
     manifest: &Manifest,
-    namespace_present: &dyn Fn(&GroupName) -> bool,
+    namespace_present: &dyn Fn(&ProxyGroupName) -> bool,
     prune: bool,
     fresh_ifname: &dyn Fn() -> String,
 ) -> Plan {
@@ -430,8 +430,8 @@ pub fn diff(
 mod tests {
     use super::*;
 
-    fn g(s: &str) -> GroupName {
-        GroupName::new(s).unwrap()
+    fn g(s: &str) -> ProxyGroupName {
+        ProxyGroupName::new(s).unwrap()
     }
     fn n(s: &str) -> NetworkName {
         NetworkName::new(s).unwrap()
@@ -549,8 +549,8 @@ mod tests {
         let (s, f) = (spec(), facts(false));
         let mut m = Manifest::default();
         let fresh = || "hrdwtest".to_string();
-        let present = |_: &GroupName| true;
-        let absent = |_: &GroupName| false;
+        let present = |_: &ProxyGroupName| true;
+        let absent = |_: &ProxyGroupName| false;
 
         let p = diff(&[(s.clone(), f.clone())], &m, &present, false, &fresh);
         assert_eq!(p.groups[0].action, Action::Create);
@@ -597,7 +597,7 @@ mod tests {
             },
         );
         let fresh = || "t".to_string();
-        let present = |_: &GroupName| true;
+        let present = |_: &ProxyGroupName| true;
         assert!(diff(&[], &m, &present, false, &fresh).groups.is_empty());
         let p = diff(&[], &m, &present, true, &fresh);
         assert_eq!(p.groups.len(), 1);

@@ -14,14 +14,14 @@
 
 use std::net::IpAddr;
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::{Error, Result};
 
 use crate::ipnet::IpNet;
 
 #[derive(Debug, Clone)]
 pub struct GatewayPeer {
-    pub group: GroupName,
+    pub group: ProxyGroupName,
     /// The client side's public key (derived from the imported private key).
     pub client_public_key: String,
     /// The tunnel address(es) the client uses; the gateway routes only these
@@ -326,7 +326,7 @@ mod tests {
 
     fn peer(group: &str, addr: &str, exit: &str) -> GatewayPeer {
         GatewayPeer {
-            group: GroupName::new(group).unwrap(),
+            group: ProxyGroupName::new(group).unwrap(),
             client_public_key: "kEjWL7wdlWmHMsqX5vofEwV4wV+tKPY4BY1rz+qFNjw=".into(),
             client_addresses: vec![addr.parse().unwrap()],
             exit: exit.parse().unwrap(),

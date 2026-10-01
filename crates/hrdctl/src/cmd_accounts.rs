@@ -27,13 +27,13 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
             name,
             labels,
             note,
-            group,
+            proxy_group,
         } => {
             let v: AccountView = ctx.client()?.call(Request::AccountAdd {
                 name,
                 labels,
                 note,
-                group,
+                proxy_group,
             })?;
             if ctx.out.json {
                 ctx.out.data(&v);
@@ -44,12 +44,38 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
                 );
             }
         }
-        AccountCmd::List { group, label } => {
+        AccountCmd::Assign {
+            proxy_group,
+            accounts,
+        } => {
+            let v: Value = ctx.client()?.call(Request::AccountAssign {
+                accounts,
+                proxy_group: Some(proxy_group),
+                create_missing: false,
+            })?;
+            crate::cmd_fleet::print_assign(ctx, &v);
+        }
+        AccountCmd::Unassign { accounts } => {
+            let v: Value = ctx.client()?.call(Request::AccountAssign {
+                accounts,
+                proxy_group: None,
+                create_missing: false,
+            })?;
+            crate::cmd_fleet::print_assign(ctx, &v);
+        }
+        AccountCmd::List {
+            group,
+            proxy_group,
+            label,
+        } => {
             let v: Vec<AccountView> = ctx.client()?.call(Request::AccountList)?;
             let v: Vec<AccountView> = v
                 .into_iter()
                 .filter(|a| {
                     group.as_ref().is_none_or(|g| a.group.as_ref() == Some(g))
+                        && proxy_group
+                            .as_ref()
+                            .is_none_or(|g| a.proxy_group.as_ref() == Some(g))
                         && label.as_ref().is_none_or(|l| a.labels.contains(l))
                 })
                 .collect();
@@ -62,6 +88,7 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
                         vec![
                             a.name.to_string(),
                             opt(&a.group),
+                            opt(&a.proxy_group),
                             format!("{:?}", a.auth).to_lowercase(),
                             a.state.to_string(),
                             a.labels.join(","),
@@ -80,6 +107,7 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
                         &[
                             "ACCOUNT",
                             "GROUP",
+                            "PROXY GROUP",
                             "SESSION",
                             "STATE",
                             "LABELS",
@@ -157,7 +185,7 @@ pub fn account(ctx: &Ctx, c: AccountCmd) -> Result<()> {
                 Some(p) => {
                     fsutil::atomic_write(&p, text.as_bytes(), 0o600)?;
                     ctx.out.line(format!(
-                        "wrote {} account(s) to {} (names, labels, groups: no secrets)",
+                        "wrote {} account(s) to {} (names, labels, proxy groups: no secrets)",
                         v.len(),
                         p.display()
                     ));

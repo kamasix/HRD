@@ -5,7 +5,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::proto::{encode_line, ResponseEnvelope, MAX_LINE};
 use hrd_core::{Error, Result};
 use hrd_net::plan::{self, Action, GroupSpec, Plan};
@@ -21,6 +21,9 @@ pub struct Shared {
     /// namespace.
     pub write_lock: Mutex<()>,
     pub allowed_uids: Vec<u32>,
+    /// `allow_service_define` in `netd.toml`: may the service user define a
+    /// tunnel, or only root?
+    pub service_may_define: bool,
 }
 
 pub fn bind(path: &Path, gid: Option<u32>, mode: u32) -> Result<UnixListener> {
@@ -163,7 +166,7 @@ fn build_plan(
     let p = plan::diff(
         &with_facts,
         &manifest,
-        &|g: &GroupName| nsops::is_nsfs(&env.ns_path(g)),
+        &|g: &ProxyGroupName| nsops::is_nsfs(&env.ns_path(g)),
         prune,
         &apply::fresh_ifname,
     );
@@ -175,12 +178,13 @@ pub fn dispatch_public(shared: &Shared, req: NetdRequest) -> Result<serde_json::
 }
 
 /// A request from a peer. Defining a tunnel (an endpoint and a key that every
-/// client in a group will be routed through) is the administrator's decision,
-/// so it needs root; the service user may plan, apply and remove.
+/// client behind it will be routed through) is the administrator's decision,
+/// so it needs root unless `allow_service_define` in `netd.toml` hands it to the
+/// service user; the service user may always plan, apply and remove.
 fn dispatch_as(shared: &Shared, uid: u32, req: NetdRequest) -> Result<serde_json::Value> {
-    if matches!(req, NetdRequest::PutNetwork { .. }) && uid != 0 {
+    if matches!(req, NetdRequest::PutNetwork { .. }) && uid != 0 && !shared.service_may_define {
         return Err(Error::Denied(
-            "defining a network needs root: run `sudo hrdctl network add ...` (the manager and the panel cannot change where traffic is routed)".into(),
+            "defining a proxy needs root: run `sudo hrdctl proxy add ...`, or set allow_service_define = true in /etc/cordial-hrd/netd.toml and restart hrd-netd so that the panel may do it (then whoever can sign in to the panel decides where traffic is routed)".into(),
         ));
     }
     dispatch(shared, req)
@@ -190,9 +194,11 @@ fn dispatch(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
     let env = &shared.env;
     let to = |v: &dyn erased::Ser| v.value();
     match req {
-        NetdRequest::Ping => {
-            Ok(serde_json::json!({ "pong": true, "version": env!("CARGO_PKG_VERSION") }))
-        }
+        NetdRequest::Ping => Ok(serde_json::json!({
+            "pong": true,
+            "version": env!("CARGO_PKG_VERSION"),
+            "service_define": shared.service_may_define,
+        })),
         NetdRequest::PutNetwork { name, config, dns } => {
             let _g = shared.write_lock.lock().unwrap_or_else(|e| e.into_inner());
             to(&env.store.put(&name, &config, &dns)?)

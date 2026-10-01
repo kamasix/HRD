@@ -7,7 +7,7 @@ use std::time::Duration;
 use clap::Args;
 use serde_json::Value;
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_core::model::{ExitInfo, Ipv6Policy, NetBackend, Network};
 use hrd_core::proto::{ImportFile, NetworkView, Request};
 use hrd_core::{fsutil, Error, Result};
@@ -17,7 +17,7 @@ use hrd_net::ipnet::IpNet;
 use hrd_net::proto::{NetdRequest, NetworkSummary};
 
 use crate::util::{age, opt, table};
-use crate::{Ctx, NetworkCmd, RuntimeCmd};
+use crate::{Ctx, ProxyCmd, RuntimeCmd};
 
 fn apks_in(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
@@ -276,9 +276,9 @@ fn to_model(s: &NetworkSummary, ipv6: Ipv6Policy) -> Network {
     }
 }
 
-pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
+pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
     match c {
-        NetworkCmd::Add {
+        ProxyCmd::Add {
             name,
             wireguard_config,
             dns,
@@ -288,7 +288,7 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
             max_clients,
         } => {
             if fsutil::euid() != 0 {
-                return Err(Error::Denied("adding a network hands a private key to the root-only helper: run this as root (sudo hrdctl network add ...)".into()));
+                return Err(Error::Denied("adding a proxy hands a private key to the root-only helper: run this as root (sudo hrdctl proxy add ...)".into()));
             }
             let md = std::fs::metadata(&wireguard_config)
                 .map_err(|e| Error::io(format!("{}", wireguard_config.display()), e))?;
@@ -303,7 +303,7 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
             // Validate locally first so that a bad file never leaves this process.
             let parsed = hrd_net::wg::parse(&text)?;
             if parsed.dns.is_empty() && dns.is_empty() {
-                return Err(Error::invalid("the file has no DNS line and --dns was not given: clients in this group can only reach the tunnel, so they need a resolver behind it"));
+                return Err(Error::invalid("the file has no DNS line and --dns was not given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
             }
             let summary: NetworkSummary = netd(ctx).call(NetdRequest::PutNetwork {
                 name: name.clone(),
@@ -333,18 +333,18 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
             if ctx.out.json {
                 ctx.out.data(&v);
             } else {
-                println!("network {} imported. Its key is in the helper's root-only store; nothing is applied yet.", v.network.name);
+                println!("proxy {} imported. Its key is in the helper's root-only store; nothing is applied yet.", v.network.name);
                 println!(
                     "  client public key (give this to the gateway): {}",
                     summary.client_public_key
                 );
-                println!("  next: hrdctl group create NAME --network {} --capacity N; hrdctl network plan; hrdctl network apply", v.network.name);
+                println!("  next: hrdctl proxy-group create NAME --group GROUP --proxy {} --capacity N; hrdctl proxy plan; hrdctl proxy apply", v.network.name);
                 if summary.carries_ipv6 && !block_ipv6 {
                     println!("  the file carries IPv6: it will be routed through the tunnel. Use --block-ipv6 to block it instead.");
                 }
             }
         }
-        NetworkCmd::List => {
+        ProxyCmd::List => {
             let v: Vec<NetworkView> = ctx.client()?.call(Request::NetworkList)?;
             if ctx.out.json {
                 ctx.out.data(&v);
@@ -354,7 +354,7 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                     .map(|n| {
                         vec![
                             n.network.name.to_string(),
-                            n.groups
+                            n.proxy_groups
                                 .iter()
                                 .map(|g| g.to_string())
                                 .collect::<Vec<_>>()
@@ -387,8 +387,8 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                     "{}",
                     table(
                         &[
-                            "NETWORK",
-                            "GROUP",
+                            "PROXY",
+                            "PROXY GROUP",
                             "STATE",
                             "ENDPOINT",
                             "CONFIGURED EXIT",
@@ -408,7 +408,7 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                 }
             }
         }
-        NetworkCmd::Plan => {
+        ProxyCmd::Plan => {
             let v: Value = ctx.client()?.call(Request::NetworkPlan)?;
             if ctx.out.json {
                 ctx.out.value(&v);
@@ -416,10 +416,10 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                 for l in v["text"].as_array().into_iter().flatten() {
                     println!("{}", l.as_str().unwrap_or(""));
                 }
-                println!("\nNothing was changed. `hrdctl network apply` performs these steps for the groups listed; they touch only this project's namespaces and firewall table.");
+                println!("\nNothing was changed. `hrdctl proxy apply` performs these steps for the proxy groups listed; they touch only this project's namespaces and firewall table.");
             }
         }
-        NetworkCmd::Apply { no_prune } => {
+        ProxyCmd::Apply { no_prune } => {
             let v: Vec<hrd_net::proto::ApplyOutcome> = ctx
                 .client()?
                 .call(Request::NetworkApply { prune: !no_prune })?;
@@ -437,10 +437,10 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                 }
             }
             if v.iter().any(|o| !o.ok) {
-                return Err(Error::unavailable("some groups could not be applied"));
+                return Err(Error::unavailable("some proxy groups could not be applied"));
             }
         }
-        NetworkCmd::Check { name } => {
+        ProxyCmd::Check { name } => {
             let v: Value = ctx.client()?.call(Request::NetworkCheck { name })?;
             if ctx.out.json {
                 ctx.out.value(&v);
@@ -461,13 +461,13 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
                         v["configured"].as_str().unwrap_or("")
                     ),
                     None => println!(
-                        "no configured exit to compare with (network set NAME --exit-ip ADDRESS)"
+                        "no configured exit to compare with (proxy set NAME --exit-ip ADDRESS)"
                     ),
                 }
                 println!("{}", v["note"].as_str().unwrap_or(""));
             }
         }
-        NetworkCmd::Set {
+        ProxyCmd::Set {
             name,
             exit_ip,
             stun_server,
@@ -482,10 +482,10 @@ pub fn network(ctx: &Ctx, c: NetworkCmd) -> Result<()> {
             if ctx.out.json {
                 ctx.out.data(&v);
             } else {
-                println!("network {} updated", v.network.name);
+                println!("proxy {} updated", v.network.name);
             }
         }
-        NetworkCmd::Remove { name } => {
+        ProxyCmd::Remove { name } => {
             let v: Value = ctx.client()?.call(Request::NetworkRemove { name })?;
             ctx.out
                 .line(format!("removed {}", v["removed"].as_str().unwrap_or("")));
@@ -510,9 +510,9 @@ pub struct GatewayArgs {
     /// The gateway's public network interface
     #[arg(long, default_value = "eth0")]
     uplink: String,
-    /// Groups to include (default: every group with a network and a configured exit)
-    #[arg(long = "group")]
-    groups: Vec<GroupName>,
+    /// Proxy groups to include (default: every proxy group with a proxy and a configured exit)
+    #[arg(long = "proxy-group")]
+    groups: Vec<ProxyGroupName>,
     /// Forward a port of the gateway to this machine's panel: its address on the management tunnel
     #[arg(long)]
     panel_target: Option<std::net::IpAddr>,
@@ -531,14 +531,17 @@ pub fn gateway_plan(ctx: &Ctx, a: GatewayArgs) -> Result<()> {
     let summaries: Vec<NetworkSummary> = netd(ctx).call(NetdRequest::ListNetworks)?;
     let mut peers = Vec::new();
     for n in &nets {
-        let Some(group) = n.groups.first() else {
+        let Some(group) = n.proxy_groups.first() else {
             continue;
         };
         if !a.groups.is_empty() && !a.groups.contains(group) {
             continue;
         }
         let Some(exit) = n.network.exit.configured else {
-            ctx.out.warn(format!("network {} has no configured exit; skipped (hrdctl network set {} --exit-ip ADDRESS)", n.network.name, n.network.name));
+            ctx.out.warn(format!(
+                "proxy {} has no configured exit; skipped (hrdctl proxy set {} --exit-ip ADDRESS)",
+                n.network.name, n.network.name
+            ));
             continue;
         };
         let s = summaries

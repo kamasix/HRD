@@ -1,12 +1,15 @@
 //! `hrd-enter`
 //!
 //! ```text
-//! hrd-enter run   --group NAME -- /absolute/program [args...]
-//! hrd-enter check --group NAME
+//! hrd-enter run   --proxy-group NAME -- /absolute/program [args...]
+//! hrd-enter check --proxy-group NAME
 //! ```
 //!
-//! **`run`** puts the process into the network namespace of the group `NAME`,
-//! gives it a private mount namespace in which the group's `resolv.conf` and
+//! (`--group` is accepted as another spelling of `--proxy-group`: it was the only
+//! name before groups were split. The namespace belongs to a proxy group.)
+//!
+//! **`run`** puts the process into the network namespace of the proxy group
+//! `NAME`, gives it a private mount namespace in which the proxy group's `resolv.conf` and
 //! `nsswitch.conf` replace the host's (and the sockets that would carry a name
 //! lookup around the tunnel are masked), then gives up every privilege and
 //! `exec`s the program. It is installed with one file capability,
@@ -21,7 +24,7 @@
 //! that chose the directory would let the caller pick which namespace to enter.
 //!
 //! **`check`** runs unprivileged, inside the client, through the profile's
-//! `network.json` gate: it succeeds only if the process is in the group's
+//! `network.json` gate: it succeeds only if the process is in the proxy group's
 //! namespace and sees no interface but `lo` and `wg0`.
 
 use std::ffi::OsString;
@@ -41,14 +44,14 @@ const NS_DIR: &str = "/run/cordial-hrd-netns";
 const NSFS_MAGIC: u64 = 0x6e73_6673;
 const IFACE: &str = "wg0";
 
-const USAGE: &str = "usage:\n  hrd-enter run --group NAME -- /absolute/program [args...]\n  hrd-enter check --group NAME\n";
+const USAGE: &str = "usage:\n  hrd-enter run --proxy-group NAME -- /absolute/program [args...]\n  hrd-enter check --proxy-group NAME\n";
 
 fn die(code: u8, msg: impl std::fmt::Display) -> ExitCode {
     eprintln!("hrd-enter: {msg}");
     ExitCode::from(code)
 }
 
-fn valid_group(s: &str) -> bool {
+fn valid_proxy_group(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
         && b.len() <= 24
@@ -58,27 +61,27 @@ fn valid_group(s: &str) -> bool {
         && !s.ends_with('-')
 }
 
-fn ns_file(group: &str) -> PathBuf {
-    Path::new(NS_DIR).join(group)
+fn ns_file(proxy_group: &str) -> PathBuf {
+    Path::new(NS_DIR).join(proxy_group)
 }
 
 /// The namespace directory and the handle in it must be root's and closed to
 /// everyone else, and the handle must be an `nsfs` file.
-fn open_group_ns(group: &str) -> Result<File, String> {
+fn open_proxy_group_ns(proxy_group: &str) -> Result<File, String> {
     let dir = fs::symlink_metadata(NS_DIR).map_err(|e| format!("{NS_DIR}: {e}"))?;
     if !dir.is_dir() || dir.uid() != 0 || dir.mode() & 0o022 != 0 {
         return Err(format!(
             "{NS_DIR} must be a directory owned by root and not writable by others"
         ));
     }
-    let path = ns_file(group);
+    let path = ns_file(proxy_group);
     let f = fs::OpenOptions::new()
         .read(true)
         .custom_flags((OFlags::NOFOLLOW | OFlags::CLOEXEC).bits() as i32)
         .open(&path)
         .map_err(|e| {
             format!(
-                "open {}: {e} (is the group applied? `hrdctl network apply`)",
+                "open {}: {e} (is the proxy group applied? `hrdctl proxy apply`)",
                 path.display()
             )
         })?;
@@ -148,13 +151,13 @@ fn drop_everything() -> Result<(), String> {
 }
 
 fn run(
-    group: &str,
+    proxy_group: &str,
     program: OsString,
     args: Vec<OsString>,
 ) -> Result<std::convert::Infallible, String> {
-    let ns = open_group_ns(group)?;
-    let resolv = Path::new(NS_DIR).join(format!("{group}.resolv.conf"));
-    let nss = Path::new(NS_DIR).join(format!("{group}.nsswitch.conf"));
+    let ns = open_proxy_group_ns(proxy_group)?;
+    let resolv = Path::new(NS_DIR).join(format!("{proxy_group}.resolv.conf"));
+    let nss = Path::new(NS_DIR).join(format!("{proxy_group}.nsswitch.conf"));
 
     rustix::thread::move_into_link_name_space(ns.as_fd(), Some(LinkNameSpaceType::Network))
         .map_err(|e| format!("setns: {} (the file needs cap_sys_admin, and the caller must not have no_new_privs set)", io::Error::from(e)))?;
@@ -184,13 +187,13 @@ fn run(
     Err(format!("exec {}: {err}", Path::new(&program).display()))
 }
 
-/// Unprivileged: is this process in the group's namespace, and alone in it?
-fn check(group: &str) -> Result<(), String> {
-    let handle = ns_file(group);
+/// Unprivileged: is this process in the proxy group's namespace, and alone in it?
+fn check(proxy_group: &str) -> Result<(), String> {
+    let handle = ns_file(proxy_group);
     let want = fs::metadata(&handle).map_err(|e| format!("{}: {e}", handle.display()))?;
     let have = fs::metadata("/proc/self/ns/net").map_err(|e| format!("/proc/self/ns/net: {e}"))?;
     if (want.dev(), want.ino()) != (have.dev(), have.ino()) {
-        return Err(format!("this process is not in the network namespace of group {group}; it would leave through the host's own network"));
+        return Err(format!("this process is not in the network namespace of proxy group {proxy_group}; it would leave through the host's own network"));
     }
     let dev =
         fs::read_to_string("/proc/self/net/dev").map_err(|e| format!("/proc/self/net/dev: {e}"))?;
@@ -207,7 +210,7 @@ fn check(group: &str) -> Result<(), String> {
     }
     if !names.contains(&IFACE) {
         return Err(format!(
-            "the namespace has no {IFACE}: the group's tunnel is not up"
+            "the namespace has no {IFACE}: the proxy group's tunnel is not up"
         ));
     }
     Ok(())
@@ -219,13 +222,15 @@ fn main() -> ExitCode {
         return die(2, USAGE);
     };
     let flag = args.next();
-    let group = args.next();
-    let (Some(flag), Some(group)) = (flag, group) else {
+    let name = args.next();
+    let (Some(flag), Some(name)) = (flag, name) else {
         return die(2, USAGE);
     };
-    let group = match (flag.to_str(), group.to_str()) {
-        (Some("--group"), Some(g)) if valid_group(g) => g.to_string(),
-        (Some("--group"), _) => return die(2, "the group name is not valid"),
+    let proxy_group = match (flag.to_str(), name.to_str()) {
+        (Some("--proxy-group" | "--group"), Some(g)) if valid_proxy_group(g) => g.to_string(),
+        (Some("--proxy-group" | "--group"), _) => {
+            return die(2, "the proxy group name is not valid")
+        }
         _ => return die(2, USAGE),
     };
     match cmd.to_str() {
@@ -239,7 +244,7 @@ fn main() -> ExitCode {
             if !Path::new(&program).is_absolute() {
                 return die(2, "the program must be an absolute path");
             }
-            match run(&group, program, args.collect()) {
+            match run(&proxy_group, program, args.collect()) {
                 Ok(never) => match never {},
                 Err(e) => die(126, e),
             }
@@ -251,7 +256,7 @@ fn main() -> ExitCode {
             // Give up what the file granted before doing anything else; this
             // mode needs none of it.
             let _ = drop_everything();
-            match check(&group) {
+            match check(&proxy_group) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => die(1, e),
             }

@@ -172,7 +172,7 @@ fn adopt_running(d: &Daemon, live: &mut Live, cg: Option<Cgroup>, now: u64) {
     live.rec.runtime = saved.runtime;
     live.rec.kind = saved.kind;
     live.rec.place_id = saved.place_id;
-    live.rec.group = saved.group;
+    live.rec.proxy_group = saved.proxy_group;
     live.rec.mode = saved.mode;
     live.rec.run = saved.run;
     live.rec.queued_at = saved.queued_at;

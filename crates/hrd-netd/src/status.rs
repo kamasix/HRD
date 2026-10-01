@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use hrd_core::ids::GroupName;
+use hrd_core::ids::ProxyGroupName;
 use hrd_net::plan::IFACE;
 use hrd_net::proto::GroupStatus;
 
@@ -35,7 +35,7 @@ pub fn parse_dump(text: &str) -> Vec<PeerDump> {
         .collect()
 }
 
-pub fn group_status(env: &Env, group: &GroupName) -> GroupStatus {
+pub fn group_status(env: &Env, group: &ProxyGroupName) -> GroupStatus {
     let mut s = GroupStatus {
         group: Some(group.clone()),
         ..Default::default()

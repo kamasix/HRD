@@ -12,11 +12,15 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AccountName, GroupName, NetworkName, PlaceId};
+use crate::error::{Error, Result};
+use crate::ids::{AccountName, GroupName, NetworkName, PlaceId, ProxyGroupName};
 
 /// Bumped when the on-disk shape changes incompatibly. The daemon refuses a
 /// registry with a schema newer than it understands rather than guessing.
-pub const REGISTRY_SCHEMA: u32 = 1;
+///
+/// 1: groups carried a network and the accounts. 2: a group is a named set of
+/// proxy groups with a place; what a group was in schema 1 is now a proxy group.
+pub const REGISTRY_SCHEMA: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Instance state
@@ -218,8 +222,10 @@ pub struct Account {
     pub name: AccountName,
     #[serde(default)]
     pub labels: Vec<String>,
+    /// The proxy group the account belongs to, which decides the network it
+    /// leaves through and, through the proxy group's group, the place it joins.
     #[serde(default)]
-    pub group: Option<GroupName>,
+    pub proxy_group: Option<ProxyGroupName>,
     #[serde(default)]
     pub note: Option<String>,
     pub created_at: u64,
@@ -230,12 +236,33 @@ pub struct Account {
     pub mode: Option<ResourceMode>,
 }
 
+/// A named set of proxy groups that play the same place: the top of the
+/// hierarchy the operator sees (group, proxy groups, accounts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
     pub name: GroupName,
-    /// The tunnel this group's clients leave through. `None` means the group
-    /// has no network and its instances are refused unless the operator has
-    /// set `allow_unrouted = true` in the daemon configuration.
+    /// The place every client of the group joins. Unset until the operator
+    /// says; a start with no place of its own is refused until then.
+    #[serde(default)]
+    pub place_id: Option<PlaceId>,
+    /// Resource mode for the clients of this group. An account's own mode and a
+    /// mode named in a start request both win over it.
+    #[serde(default)]
+    pub mode: Option<ResourceMode>,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub created_at: u64,
+}
+
+/// Accounts that leave through one proxy: one tunnel in one network namespace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyGroup {
+    pub name: ProxyGroupName,
+    /// The group this proxy group is part of.
+    pub group: GroupName,
+    /// The tunnel this proxy group's clients leave through. `None` means it has
+    /// no network and its instances are refused unless the operator has set
+    /// `allow_unrouted = true` in the daemon configuration.
     #[serde(default)]
     pub network: Option<NetworkName>,
     /// How many accounts may be assigned. An organisational limit chosen by the
@@ -356,6 +383,8 @@ pub struct Registry {
     #[serde(default)]
     pub groups: BTreeMap<GroupName, Group>,
     #[serde(default)]
+    pub proxy_groups: BTreeMap<ProxyGroupName, ProxyGroup>,
+    #[serde(default)]
     pub networks: BTreeMap<NetworkName, Network>,
 }
 
@@ -365,9 +394,126 @@ impl Default for Registry {
             schema: REGISTRY_SCHEMA,
             accounts: BTreeMap::new(),
             groups: BTreeMap::new(),
+            proxy_groups: BTreeMap::new(),
             networks: BTreeMap::new(),
         }
     }
+}
+
+impl Registry {
+    /// Read `registry.json`, upgrading an older schema in memory. The second
+    /// value is the schema it was upgraded *from*, if it was, so that the caller
+    /// can keep a copy of the old file before writing the new one.
+    ///
+    /// A schema newer than this build understands is refused, and so is a file
+    /// whose relations do not hold (an account in a proxy group that does not
+    /// exist): both mean it was not written by a build of this program, and
+    /// guessing at what it meant would be worse than not starting.
+    pub fn from_slice(bytes: &[u8]) -> Result<(Registry, Option<u32>)> {
+        let mut v: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|e| Error::invalid(format!("not a valid registry: {e}")))?;
+        let schema = v.get("schema").and_then(|s| s.as_u64()).unwrap_or(1) as u32;
+        if schema > REGISTRY_SCHEMA {
+            return Err(Error::invalid(format!(
+                "the registry has schema {schema} and this build understands up to {REGISTRY_SCHEMA}; install a newer hrdd"
+            )));
+        }
+        let upgraded = (schema < REGISTRY_SCHEMA).then_some(schema);
+        if schema == 1 {
+            upgrade_v1(&mut v)?;
+        }
+        let r: Registry = serde_json::from_value(v)
+            .map_err(|e| Error::invalid(format!("not a valid registry: {e}")))?;
+        r.check_relations()?;
+        Ok((r, upgraded))
+    }
+
+    /// The group a proxy group belongs to.
+    pub fn group_of(&self, pg: &ProxyGroupName) -> Option<&Group> {
+        self.groups.get(&self.proxy_groups.get(pg)?.group)
+    }
+
+    /// Every relation holds: proxy groups name a group that exists, accounts
+    /// name a proxy group that exists, proxy groups name a network that exists,
+    /// and no network carries two proxy groups.
+    pub fn check_relations(&self) -> Result<()> {
+        let mut used: BTreeMap<&NetworkName, &ProxyGroupName> = BTreeMap::new();
+        for pg in self.proxy_groups.values() {
+            if !self.groups.contains_key(&pg.group) {
+                return Err(Error::invalid(format!(
+                    "the registry is inconsistent: proxy group {} is in group {}, which does not exist",
+                    pg.name, pg.group
+                )));
+            }
+            if let Some(n) = &pg.network {
+                if !self.networks.contains_key(n) {
+                    return Err(Error::invalid(format!(
+                        "the registry is inconsistent: proxy group {} uses network {n}, which does not exist",
+                        pg.name
+                    )));
+                }
+                if let Some(other) = used.insert(n, &pg.name) {
+                    return Err(Error::invalid(format!(
+                        "the registry is inconsistent: network {n} carries both {other} and {}",
+                        pg.name
+                    )));
+                }
+            }
+        }
+        for a in self.accounts.values() {
+            if let Some(pg) = &a.proxy_group {
+                if !self.proxy_groups.contains_key(pg) {
+                    return Err(Error::invalid(format!(
+                        "the registry is inconsistent: account {} is in proxy group {pg}, which does not exist",
+                        a.name
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Schema 1 had one kind of group: a network and the accounts that leave
+/// through it. That is a proxy group now. Each one becomes a group of the same
+/// name holding exactly one proxy group of the same name, so every name the
+/// operator knows, and the namespace the helper already built for it, stays
+/// valid; the group gets no place, because schema 1 never stored one.
+fn upgrade_v1(v: &mut serde_json::Value) -> Result<()> {
+    use serde_json::{json, Map, Value};
+    let obj = v
+        .as_object_mut()
+        .ok_or_else(|| Error::invalid("the registry is not a JSON object"))?;
+    let old = match obj.remove("groups") {
+        Some(Value::Object(m)) => m,
+        Some(Value::Null) | None => Map::new(),
+        Some(_) => return Err(Error::invalid("the registry's groups are not an object")),
+    };
+    let (mut groups, mut proxy_groups) = (Map::new(), Map::new());
+    for (name, mut g) in old {
+        let created = g.get("created_at").cloned().unwrap_or(json!(0));
+        groups.insert(
+            name.clone(),
+            json!({ "name": name, "place_id": null, "mode": null, "note": null, "created_at": created }),
+        );
+        if let Some(o) = g.as_object_mut() {
+            o.insert("group".into(), json!(name));
+        }
+        proxy_groups.insert(name, g);
+    }
+    obj.insert("groups".into(), Value::Object(groups));
+    obj.insert("proxy_groups".into(), Value::Object(proxy_groups));
+    if let Some(Value::Object(accounts)) = obj.get_mut("accounts") {
+        for a in accounts.values_mut() {
+            if let Some(o) = a.as_object_mut() {
+                if let Some(g) = o.remove("group") {
+                    o.insert("proxy_group".into(), g);
+                }
+            }
+        }
+    }
+    obj.insert("schema".into(), json!(REGISTRY_SCHEMA));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -464,8 +610,10 @@ pub struct InstanceRecord {
     pub reason: Option<String>,
     #[serde(default)]
     pub place_id: Option<PlaceId>,
-    #[serde(default)]
-    pub group: Option<GroupName>,
+    /// The proxy group whose namespace the run used. Records written before
+    /// groups were split called it `group`.
+    #[serde(default, alias = "group")]
+    pub proxy_group: Option<ProxyGroupName>,
     pub mode: ResourceMode,
     /// Runtime build this run uses, by engine version. Fixed at start, so a
     /// later `runtime use` does not change a running instance's files.
@@ -501,7 +649,7 @@ impl InstanceRecord {
             state: State::Configured,
             reason: None,
             place_id: None,
-            group: None,
+            proxy_group: None,
             mode: ResourceMode::Compatible,
             runtime: None,
             queued_at: None,
@@ -564,6 +712,182 @@ mod tests {
         let json = serde_json::to_string(&n).unwrap().to_ascii_lowercase();
         assert!(!json.contains("private"), "{json}");
         assert!(!json.contains("preshared"), "{json}");
+    }
+
+    fn a_network(name: &str) -> Network {
+        Network {
+            name: NetworkName::new(name).unwrap(),
+            backend: NetBackend::WireguardNetns,
+            secret_ref: format!("netd:{name}"),
+            endpoint: "203.0.113.1:51820".into(),
+            peer_public_key: "AAAA".into(),
+            addresses: vec!["10.0.0.2/32".into()],
+            dns: vec![],
+            allowed_ips: vec!["0.0.0.0/0".into()],
+            mtu: None,
+            persistent_keepalive: None,
+            ipv6: Ipv6Policy::Auto,
+            exit: ExitInfo::default(),
+            stun_server: None,
+            max_clients: None,
+            created_at: 7,
+        }
+    }
+
+    /// A registry as schema 1 wrote it: a group is a network plus its accounts.
+    fn schema_1() -> serde_json::Value {
+        serde_json::json!({
+            "schema": 1,
+            "accounts": {
+                "alt-01": { "name": "alt-01", "labels": ["b1"], "group": "g01", "created_at": 100,
+                            "auth": { "status": "stored" } },
+                "alt-02": { "name": "alt-02", "group": null, "created_at": 101, "auth": {} }
+            },
+            "groups": {
+                "g01": { "name": "g01", "network": "de-1", "capacity": 20, "note": "germany", "created_at": 50 },
+                "g02": { "name": "g02", "capacity": 5, "created_at": 60 }
+            },
+            "networks": { "de-1": serde_json::to_value(a_network("de-1")).unwrap() }
+        })
+    }
+
+    #[test]
+    fn a_schema_1_registry_becomes_groups_each_holding_one_proxy_group() {
+        let (r, upgraded) =
+            Registry::from_slice(&serde_json::to_vec(&schema_1()).unwrap()).unwrap();
+        assert_eq!(upgraded, Some(1));
+        assert_eq!(r.schema, REGISTRY_SCHEMA);
+        // every old group is a group of the same name ...
+        assert_eq!(r.groups.len(), 2);
+        let g01 = &r.groups[&GroupName::new("g01").unwrap()];
+        assert_eq!((g01.place_id, g01.mode), (None, None));
+        // ... holding one proxy group of the same name, which keeps the network,
+        // the capacity and the note, and therefore its namespace
+        let pg = &r.proxy_groups[&ProxyGroupName::new("g01").unwrap()];
+        assert_eq!(pg.group, g01.name);
+        assert_eq!(pg.network, Some(NetworkName::new("de-1").unwrap()));
+        assert_eq!(
+            (pg.capacity, pg.note.as_deref(), pg.created_at),
+            (20, Some("germany"), 50)
+        );
+        assert!(r.proxy_groups[&ProxyGroupName::new("g02").unwrap()]
+            .network
+            .is_none());
+        // accounts keep their membership under the new field name
+        assert_eq!(
+            r.accounts[&AccountName::new("alt-01").unwrap()].proxy_group,
+            Some(ProxyGroupName::new("g01").unwrap())
+        );
+        assert_eq!(
+            r.accounts[&AccountName::new("alt-02").unwrap()].proxy_group,
+            None
+        );
+        assert_eq!(
+            r.group_of(&ProxyGroupName::new("g01").unwrap())
+                .map(|g| &g.name),
+            Some(&g01.name)
+        );
+    }
+
+    #[test]
+    fn upgrading_is_idempotent_and_a_current_registry_is_not_flagged() {
+        let (r, _) = Registry::from_slice(&serde_json::to_vec(&schema_1()).unwrap()).unwrap();
+        let again = serde_json::to_vec(&r).unwrap();
+        let (r2, upgraded) = Registry::from_slice(&again).unwrap();
+        assert_eq!(upgraded, None, "a schema 2 file is read as it is");
+        assert_eq!(
+            serde_json::to_value(&r).unwrap(),
+            serde_json::to_value(&r2).unwrap()
+        );
+        // the oldest, emptiest files still load
+        for empty in [r#"{"schema":1}"#, r#"{}"#, r#"{"schema":2}"#] {
+            Registry::from_slice(empty.as_bytes()).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_registry_from_the_future_or_with_broken_relations_is_refused() {
+        let e = Registry::from_slice(br#"{"schema":3}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("schema 3"), "{e}");
+
+        let base = |extra: serde_json::Value| {
+            let mut v = serde_json::json!({ "schema": 2 });
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::to_vec(&v).unwrap()
+        };
+        let pg = |group: &str, net: serde_json::Value| serde_json::json!({ "x": { "name": "x", "group": group, "network": net, "capacity": 1, "created_at": 0 } });
+        // a proxy group in a group that does not exist
+        let e = Registry::from_slice(&base(
+            serde_json::json!({ "proxy_groups": pg("nope", serde_json::Value::Null) }),
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("inconsistent") && e.contains("nope"), "{e}");
+        // an account in a proxy group that does not exist
+        let e = Registry::from_slice(&base(serde_json::json!({
+            "accounts": { "a": { "name": "a", "proxy_group": "ghost", "created_at": 0, "auth": {} } }
+        })))
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("ghost"), "{e}");
+        // a network that is not defined
+        let e = Registry::from_slice(&base(serde_json::json!({
+            "groups": { "g": { "name": "g", "created_at": 0 } },
+            "proxy_groups": pg("g", serde_json::json!("de-9"))
+        })))
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("de-9"), "{e}");
+    }
+
+    #[test]
+    fn a_network_cannot_carry_two_proxy_groups() {
+        let mut r = Registry::default();
+        let g = GroupName::new("g").unwrap();
+        r.groups.insert(
+            g.clone(),
+            Group {
+                name: g.clone(),
+                place_id: None,
+                mode: None,
+                note: None,
+                created_at: 0,
+            },
+        );
+        r.networks
+            .insert(NetworkName::new("n").unwrap(), a_network("n"));
+        for name in ["a", "b"] {
+            let p = ProxyGroupName::new(name).unwrap();
+            r.proxy_groups.insert(
+                p.clone(),
+                ProxyGroup {
+                    name: p,
+                    group: g.clone(),
+                    network: Some(NetworkName::new("n").unwrap()),
+                    capacity: 1,
+                    note: None,
+                    created_at: 0,
+                },
+            );
+        }
+        assert!(r
+            .check_relations()
+            .unwrap_err()
+            .to_string()
+            .contains("carries both"));
+    }
+
+    #[test]
+    fn an_instance_record_written_before_the_split_still_reads() {
+        let old = r#"{"id":"alt-1","run":3,"state":"stopped","mode":"compatible","state_since":1,"group":"g01"}"#;
+        let rec: InstanceRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(rec.proxy_group, Some(ProxyGroupName::new("g01").unwrap()));
+        let now = serde_json::to_string(&rec).unwrap();
+        assert!(now.contains("\"proxy_group\":\"g01\""), "{now}");
     }
 
     #[test]

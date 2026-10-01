@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
-use hrd_core::ids::{AccountName, GroupName, PlaceId};
+use hrd_core::ids::{AccountName, GroupName, PlaceId, ProxyGroupName};
 use hrd_core::model::{AuthStatus, Readiness, ResourceMode, RunKind, State};
 use hrd_core::proto::{Filter, ImportFile, InstanceDetail, InstanceView, LoginAction, LoginView};
 use hrd_core::redact::scrub;
@@ -15,9 +15,10 @@ use hrd_core::{Error, Result};
 use crate::machine::set_state;
 use crate::ops_registry::to;
 use crate::state::{Daemon, Inner};
+use crate::views::{members_of_group, members_of_proxy_group};
 use crate::{devctl, logtail, netops, runs, runtime, secrets::SecretsState, spawn, views};
 
-fn refresh_network_if_stale(d: &Daemon, group: &GroupName) {
+fn refresh_network_if_stale(d: &Daemon, group: &ProxyGroupName) {
     let stale = {
         let i = d.lock();
         i.net_status
@@ -32,10 +33,40 @@ fn refresh_network_if_stale(d: &Daemon, group: &GroupName) {
 
 struct Ask {
     kind: RunKind,
+    /// The place named in the request. Without one, a play run joins the place
+    /// of the account's group.
     place: Option<PlaceId>,
     code: Option<String>,
     mode: Option<ResourceMode>,
-    explicit_group: Option<GroupName>,
+    explicit_proxy_group: Option<ProxyGroupName>,
+}
+
+/// The place a play run joins: the one the request names, else the one of the
+/// group the account's proxy group is part of. Refused, with the sentence that
+/// says what to do about it, when there is neither.
+fn resolve_place(
+    reg: &hrd_core::model::Registry,
+    proxy_group: Option<&ProxyGroupName>,
+    asked: Option<PlaceId>,
+    account: &AccountName,
+) -> Result<PlaceId> {
+    if let Some(p) = asked {
+        return Ok(p);
+    }
+    let group = proxy_group
+        .and_then(|pg| reg.proxy_groups.get(pg))
+        .and_then(|pg| reg.groups.get(&pg.group));
+    match group {
+        Some(g) => g.place_id.ok_or_else(|| {
+            Error::invalid(format!(
+                "group {0} has no place id yet: set it (`hrdctl group set {0} --place-id N`) or give --place-id",
+                g.name
+            ))
+        }),
+        None => Err(Error::invalid(format!(
+            "{account} is in no group, so there is no place to join: give --place-id"
+        ))),
+    }
 }
 
 /// All the refusals that can be decided before anything is created, then the
@@ -56,10 +87,10 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
             .accounts
             .get(account)
             .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
-        match (&ask.explicit_group, &acc.group) {
+        match (&ask.explicit_proxy_group, &acc.proxy_group) {
             (Some(e), Some(g)) if e != g => {
                 return Err(Error::conflict(format!(
-                    "{account} is assigned to group {g}, not {e}; use `group assign` to move it"
+                    "{account} is assigned to proxy group {g}, not {e}; use `hrdctl account assign` to move it"
                 )))
             }
             (Some(e), _) => Some(e.clone()),
@@ -82,30 +113,27 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
     let mut guard = d.lock();
     let inner: &mut Inner = &mut guard;
     let now = now_unix();
-    // Group, capacity, route.
+    // Proxy group, capacity, route, and from its group the mode.
     let mut assign = false;
+    let mut group_mode = None;
     if let Some(g) = &group_name {
         let gr = inner
             .reg
-            .groups
+            .proxy_groups
             .get(g)
-            .ok_or_else(|| Error::not_found(format!("no group {g}")))?
+            .ok_or_else(|| Error::not_found(format!("no proxy group {g}")))?
             .clone();
+        group_mode = inner.reg.groups.get(&gr.group).and_then(|t| t.mode);
         let acc = inner
             .reg
             .accounts
             .get(account)
             .ok_or_else(|| Error::not_found(format!("no account {account}")))?;
-        if acc.group.as_ref() != Some(g) {
-            let members = inner
-                .reg
-                .accounts
-                .values()
-                .filter(|a| a.group.as_ref() == Some(g))
-                .count();
+        if acc.proxy_group.as_ref() != Some(g) {
+            let members = views::members_of_proxy_group(inner, g).len();
             if members as u32 >= gr.capacity {
                 return Err(Error::conflict(format!(
-                    "group {g} is full ({members} of {})",
+                    "proxy group {g} is full ({members} of {})",
                     gr.capacity
                 )));
             }
@@ -113,14 +141,14 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
         }
         match &gr.network {
             None if !cfg.network.allow_unrouted => {
-                return Err(Error::unavailable(format!("group {g} has no network; attach one (`group create --network`) or set network.allow_unrouted (the client would then use the server's own address)")))
+                return Err(Error::unavailable(format!("proxy group {g} has no proxy; give it one (`hrdctl proxy-group set {g} --proxy NAME`) or set network.allow_unrouted (the client would then use the server's own address)")))
             }
             None => {}
             Some(n) => {
                 let (ready, why) = netops::readiness(inner, cfg.network.handshake_max_age_s, g);
                 if matches!(ready, Readiness::NotApplied | Readiness::Broken | Readiness::Unknown) {
                     return Err(Error::unavailable(format!(
-                        "the network of group {g} ({n}) is not usable: {} ({}); the client was not started because it would not be routed",
+                        "the proxy of proxy group {g} ({n}) is not usable: {} ({}); the client was not started because it would not be routed",
                         why.unwrap_or_default(),
                         format!("{ready:?}").to_lowercase()
                     )));
@@ -129,19 +157,27 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
                     let live: usize = inner
                         .live
                         .values()
-                        .filter(|l| l.rec.state.is_live() && l.rec.group.as_ref().is_some_and(|lg| inner.reg.groups.get(lg).and_then(|x| x.network.as_ref()) == Some(n)))
+                        .filter(|l| l.rec.state.is_live() && l.rec.proxy_group.as_ref().is_some_and(|lg| inner.reg.proxy_groups.get(lg).and_then(|x| x.network.as_ref()) == Some(n)))
                         .count();
                     if live as u32 >= max {
-                        return Err(Error::conflict(format!("network {n} already carries {live} live clients (max_clients = {max})")));
+                        return Err(Error::conflict(format!("proxy {n} already carries {live} live clients (max_clients = {max})")));
                     }
                 }
             }
         }
     } else if !cfg.network.allow_unrouted {
         return Err(Error::unavailable(format!(
-            "{account} has no group: `group assign` it, or set network.allow_unrouted"
+            "{account} is in no proxy group: `hrdctl account assign` it, or set network.allow_unrouted"
         )));
     }
+    // The place: the request's, else the group's. Only a play run joins one.
+    let place = if ask.kind == RunKind::Play {
+        let p = resolve_place(&inner.reg, group_name.as_ref(), ask.place, account)?;
+        spawn::join_url(p, ask.code.as_deref())?;
+        Some(p)
+    } else {
+        None
+    };
     // Session.
     if ask.kind == RunKind::Play {
         let auth = inner
@@ -201,13 +237,14 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
 
     if assign {
         if let Some(a) = inner.reg.accounts.get_mut(account) {
-            a.group = group_name.clone();
+            a.proxy_group = group_name.clone();
         }
         d.save_registry(inner)?;
     }
     let mode = runs::default_mode(
         &cfg,
         inner.reg.accounts.get(account).and_then(|a| a.mode),
+        group_mode,
         ask.mode,
     );
     let l = inner
@@ -217,8 +254,8 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
     let from = l.rec.state;
     l.rec.run += 1;
     l.rec.kind = ask.kind;
-    l.rec.place_id = ask.place;
-    l.rec.group = group_name;
+    l.rec.place_id = place;
+    l.rec.proxy_group = group_name;
     l.rec.mode = mode;
     l.rec.queued_at = Some(now);
     l.rec.started_at = None;
@@ -249,8 +286,8 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
 pub fn instance_start(
     d: &Daemon,
     account: AccountName,
-    place: PlaceId,
-    group: Option<GroupName>,
+    place: Option<PlaceId>,
+    proxy_group: Option<ProxyGroupName>,
     code: Option<String>,
     mode: Option<ResourceMode>,
 ) -> Result<Value> {
@@ -259,33 +296,23 @@ pub fn instance_start(
         &account,
         Ask {
             kind: RunKind::Play,
-            place: Some(place),
+            place,
             code,
             mode,
-            explicit_group: group,
+            explicit_proxy_group: proxy_group,
         },
     )?)
 }
 
-pub fn group_start(
+/// Queue each of `members`. One that cannot start (already running, no session,
+/// no usable proxy) is reported with its reason and does not hold up the rest.
+fn start_members(
     d: &Daemon,
-    group: GroupName,
-    place: PlaceId,
+    members: Vec<AccountName>,
+    place: Option<PlaceId>,
     code: Option<String>,
     mode: Option<ResourceMode>,
-) -> Result<Value> {
-    let members: Vec<AccountName> = {
-        let i = d.lock();
-        if !i.reg.groups.contains_key(&group) {
-            return Err(Error::not_found(format!("no group {group}")));
-        }
-        i.reg
-            .accounts
-            .values()
-            .filter(|a| a.group.as_ref() == Some(&group))
-            .map(|a| a.name.clone())
-            .collect()
-    };
+) -> (Vec<String>, Vec<Value>) {
     let (mut queued, mut skipped) = (Vec::new(), Vec::new());
     for a in members {
         match enqueue(
@@ -293,10 +320,10 @@ pub fn group_start(
             &a,
             Ask {
                 kind: RunKind::Play,
-                place: Some(place),
+                place,
                 code: code.clone(),
                 mode,
-                explicit_group: Some(group.clone()),
+                explicit_proxy_group: None,
             },
         ) {
             Ok(_) => queued.push(a.to_string()),
@@ -305,7 +332,102 @@ pub fn group_start(
             }
         }
     }
+    (queued, skipped)
+}
+
+/// A start that has no place to give every one of its accounts says so once,
+/// instead of listing the same refusal for each of them.
+fn require_place(
+    place: Option<PlaceId>,
+    group_place: Option<PlaceId>,
+    group: &GroupName,
+) -> Result<()> {
+    if place.is_none() && group_place.is_none() {
+        return Err(Error::invalid(format!(
+            "group {group} has no place id yet: set it (`hrdctl group set {group} --place-id N`) or give --place-id"
+        )));
+    }
+    Ok(())
+}
+
+pub fn group_start(
+    d: &Daemon,
+    group: GroupName,
+    place: Option<PlaceId>,
+    code: Option<String>,
+    mode: Option<ResourceMode>,
+) -> Result<Value> {
+    let members: Vec<AccountName> = {
+        let i = d.lock();
+        let g = i
+            .reg
+            .groups
+            .get(&group)
+            .ok_or_else(|| Error::not_found(format!("no group {group}")))?;
+        require_place(place, g.place_id, &group)?;
+        members_of_group(&i, &group)
+    };
+    let (queued, skipped) = start_members(d, members, place, code, mode);
     Ok(json!({ "group": group, "queued": queued, "skipped": skipped }))
+}
+
+pub fn proxy_group_start(
+    d: &Daemon,
+    name: ProxyGroupName,
+    place: Option<PlaceId>,
+    code: Option<String>,
+    mode: Option<ResourceMode>,
+) -> Result<Value> {
+    let members: Vec<AccountName> = {
+        let i = d.lock();
+        let pg = i
+            .reg
+            .proxy_groups
+            .get(&name)
+            .ok_or_else(|| Error::not_found(format!("no proxy group {name}")))?;
+        let gp = i.reg.groups.get(&pg.group).and_then(|g| g.place_id);
+        require_place(place, gp, &pg.group)?;
+        members_of_proxy_group(&i, &name)
+    };
+    let (queued, skipped) = start_members(d, members, place, code, mode);
+    Ok(json!({ "proxy_group": name, "queued": queued, "skipped": skipped }))
+}
+
+/// Stop what is running in `members` (and cancel what is queued). An account
+/// with nothing running is left alone and not counted.
+fn stop_members(d: &Daemon, members: &[AccountName], force: bool) -> Value {
+    let mut guard = d.lock();
+    let inner: &mut Inner = &mut guard;
+    let mut stopping = 0;
+    for id in members {
+        if inner.live.get(id).is_some_and(|l| l.busy()) && stop_locked(d, inner, id, force).is_ok()
+        {
+            stopping += 1;
+        }
+    }
+    json!({ "stopping": stopping, "force": force })
+}
+
+pub fn group_stop(d: &Daemon, group: GroupName, force: bool) -> Result<Value> {
+    let members = {
+        let i = d.lock();
+        if !i.reg.groups.contains_key(&group) {
+            return Err(Error::not_found(format!("no group {group}")));
+        }
+        members_of_group(&i, &group)
+    };
+    Ok(stop_members(d, &members, force))
+}
+
+pub fn proxy_group_stop(d: &Daemon, name: ProxyGroupName, force: bool) -> Result<Value> {
+    let members = {
+        let i = d.lock();
+        if !i.reg.proxy_groups.contains_key(&name) {
+            return Err(Error::not_found(format!("no proxy group {name}")));
+        }
+        members_of_proxy_group(&i, &name)
+    };
+    Ok(stop_members(d, &members, force))
 }
 
 pub fn instance_stop(d: &Daemon, id: AccountName, force: bool) -> Result<Value> {
@@ -390,10 +512,13 @@ pub fn queue_cancel(d: &Daemon, ids: Vec<AccountName>, all: bool) -> Result<Valu
 
 fn matches_filter(inner: &Inner, l: &crate::state::Live, f: &Filter) -> bool {
     let acc = inner.reg.accounts.get(&l.rec.id);
+    let proxy_group = acc.and_then(|a| a.proxy_group.as_ref());
+    let group = proxy_group
+        .and_then(|pg| inner.reg.proxy_groups.get(pg))
+        .map(|p| &p.group);
     (f.states.is_empty() || f.states.contains(&l.rec.state))
-        && (f.group.is_none()
-            || acc.and_then(|a| a.group.as_ref()) == f.group.as_ref()
-            || l.rec.group == f.group)
+        && (f.group.is_none() || group == f.group.as_ref())
+        && (f.proxy_group.is_none() || proxy_group == f.proxy_group.as_ref())
         && f.label
             .as_ref()
             .is_none_or(|lb| acc.is_some_and(|a| a.labels.contains(lb)))
@@ -410,6 +535,12 @@ pub fn status(d: &Daemon, f: Filter) -> Result<Value> {
         .map(|l| views::instance(&inner, &samples, l))
         .collect();
     to(&v)
+}
+
+pub fn overview(d: &Daemon) -> Result<Value> {
+    let inner = d.lock();
+    let samples = d.samples.lock().unwrap_or_else(|e| e.into_inner());
+    to(&views::overview(&inner, &samples, &d.cfg()))
 }
 
 pub fn instance_show(d: &Daemon, id: AccountName) -> Result<Value> {
@@ -464,7 +595,7 @@ pub fn login_start(d: &Daemon, name: AccountName) -> Result<Value> {
             place: None,
             code: None,
             mode: None,
-            explicit_group: None,
+            explicit_proxy_group: None,
         },
     )?;
     let _ = v;
@@ -727,4 +858,197 @@ pub fn runtime_import(
     let r = run_importer(c);
     drop(highs);
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops_registry as or;
+    use crate::state::testing::daemon;
+
+    fn g(s: &str) -> GroupName {
+        GroupName::new(s).unwrap()
+    }
+    fn pg(s: &str) -> ProxyGroupName {
+        ProxyGroupName::new(s).unwrap()
+    }
+    fn ac(s: &str) -> AccountName {
+        AccountName::new(s).unwrap()
+    }
+    fn place(n: u64) -> PlaceId {
+        PlaceId::new(n).unwrap()
+    }
+
+    /// A group with a place, holding proxy groups with accounts.
+    fn fleet(tag: &str, group_place: Option<PlaceId>) -> std::sync::Arc<Daemon> {
+        let d = daemon(tag);
+        or::group_create(&d, g("game"), group_place, None, None).unwrap();
+        or::proxy_group_create(&d, pg("de-1"), g("game"), None, 5, None).unwrap();
+        or::proxy_group_create(&d, pg("nl-1"), g("game"), None, 5, None).unwrap();
+        or::account_assign(&d, vec![ac("a1"), ac("a2")], Some(pg("de-1")), true).unwrap();
+        or::account_assign(&d, vec![ac("b1")], Some(pg("nl-1")), true).unwrap();
+        or::account_add(&d, ac("loose"), vec![], None, None).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_start_joins_the_place_it_names_else_the_one_of_the_accounts_group() {
+        let d = fleet("place", Some(place(111)));
+        let reg = d.lock().reg.clone();
+        // nothing named: the group's place
+        assert_eq!(
+            resolve_place(&reg, Some(&pg("de-1")), None, &ac("a1")).unwrap(),
+            place(111)
+        );
+        // named: that one wins
+        assert_eq!(
+            resolve_place(&reg, Some(&pg("de-1")), Some(place(222)), &ac("a1")).unwrap(),
+            place(222)
+        );
+        // in no group and nothing named: there is nothing to join
+        let e = resolve_place(&reg, None, None, &ac("loose"))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no group") && e.contains("--place-id"), "{e}");
+        // ... but a place named for it is enough
+        assert_eq!(
+            resolve_place(&reg, None, Some(place(5)), &ac("loose")).unwrap(),
+            place(5)
+        );
+    }
+
+    #[test]
+    fn a_group_without_a_place_says_how_to_give_it_one() {
+        let d = fleet("noplace", None);
+        let reg = d.lock().reg.clone();
+        let e = resolve_place(&reg, Some(&pg("de-1")), None, &ac("a1"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("group game has no place id")
+                && e.contains("hrdctl group set game --place-id"),
+            "{e}"
+        );
+        // starting the group or one of its proxy groups says it once, up front
+        for r in [
+            group_start(&d, g("game"), None, None, None),
+            proxy_group_start(&d, pg("de-1"), None, None, None),
+        ] {
+            let e = r.unwrap_err().to_string();
+            assert!(e.contains("has no place id yet"), "{e}");
+        }
+        // a place named in the request is enough, and each account is tried on its own
+        let r = group_start(&d, g("game"), Some(place(7)), None, None).unwrap();
+        assert_eq!(
+            r["queued"].as_array().unwrap().len() + r["skipped"].as_array().unwrap().len(),
+            3
+        );
+    }
+
+    #[test]
+    fn starting_a_group_tries_every_account_in_its_proxy_groups_and_nobody_else() {
+        let d = fleet("members", Some(place(1)));
+        // nothing here can actually start (no Roblox build, no secret store); what
+        // is checked is who was tried, and that each refusal carries its reason
+        let r = group_start(&d, g("game"), None, None, None).unwrap();
+        let skipped: Vec<String> = r["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["account"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            skipped,
+            ["a1", "a2", "b1"],
+            "the unassigned account is not part of the group"
+        );
+        assert!(r["skipped"][0]["reason"].as_str().unwrap().len() > 5);
+
+        let r = proxy_group_start(&d, pg("nl-1"), None, None, None).unwrap();
+        assert_eq!(r["skipped"].as_array().unwrap().len(), 1);
+        assert_eq!(r["skipped"][0]["account"], "b1");
+
+        assert!(group_start(&d, g("nope"), None, None, None).is_err());
+        assert!(proxy_group_start(&d, pg("nope"), None, None, None).is_err());
+    }
+
+    #[test]
+    fn stopping_a_group_stops_only_what_is_running_in_it() {
+        let d = fleet("stop", Some(place(1)));
+        {
+            // two accounts of the group are waiting in the queue; one of another
+            // proxy group is too; the unassigned one is not part of the group
+            let mut inner = d.lock();
+            for a in ["a1", "b1", "loose"] {
+                inner.live.get_mut(&ac(a)).unwrap().rec.state = State::Queued;
+                inner.queue.push_back(ac(a));
+            }
+        }
+        let r = proxy_group_stop(&d, pg("de-1"), false).unwrap();
+        assert_eq!(r["stopping"], 1, "only a1 was running in de-1");
+        {
+            let inner = d.lock();
+            assert_eq!(inner.live[&ac("a1")].rec.state, State::Stopped);
+            assert_eq!(inner.live[&ac("b1")].rec.state, State::Queued);
+        }
+        let r = group_stop(&d, g("game"), false).unwrap();
+        assert_eq!(
+            r["stopping"], 1,
+            "b1; a1 had already stopped and loose is in no group"
+        );
+        let inner = d.lock();
+        assert_eq!(inner.live[&ac("b1")].rec.state, State::Stopped);
+        assert_eq!(inner.live[&ac("loose")].rec.state, State::Queued);
+        assert_eq!(
+            inner
+                .queue
+                .iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>(),
+            ["loose"]
+        );
+    }
+
+    #[test]
+    fn status_can_be_filtered_by_group_and_by_proxy_group() {
+        let d = fleet("filter", Some(place(1)));
+        let ids = |f: Filter| -> Vec<String> {
+            status(&d, f)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let none = Filter::default;
+        assert_eq!(
+            ids(Filter {
+                group: Some(g("game")),
+                ..none()
+            }),
+            ["a1", "a2", "b1"]
+        );
+        assert_eq!(
+            ids(Filter {
+                proxy_group: Some(pg("nl-1")),
+                ..none()
+            }),
+            ["b1"]
+        );
+        assert_eq!(ids(none()).len(), 4);
+        // the view says both names
+        let v = status(
+            &d,
+            Filter {
+                accounts: vec![ac("a2")],
+                ..none()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (v[0]["group"].as_str(), v[0]["proxy_group"].as_str()),
+            (Some("game"), Some("de-1"))
+        );
+    }
 }
