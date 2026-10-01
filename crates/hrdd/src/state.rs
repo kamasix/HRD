@@ -249,6 +249,12 @@ pub mod testing {
     use super::*;
 
     pub fn daemon(tag: &str) -> Arc<Daemon> {
+        daemon_with(tag, false)
+    }
+
+    /// `no_secrets`: `secrets.backend = none`, so removing an account has no stored
+    /// session to erase first.
+    pub fn daemon_with(tag: &str, no_secrets: bool) -> Arc<Daemon> {
         let root = std::env::temp_dir().join(format!("hrdd-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let layout = Layout::under(&root);
@@ -260,7 +266,10 @@ pub mod testing {
         ] {
             fsutil::ensure_private_dir(p, 0o700).unwrap();
         }
-        let cfg = Config::default();
+        let mut cfg = Config::default();
+        if no_secrets {
+            cfg.secrets.backend = hrd_core::config::SecretBackend::None;
+        }
         Arc::new(Daemon {
             netd: NetdClient::new(layout.netd_socket()),
             secrets: crate::secrets::Secrets::new(layout.clone(), &cfg),

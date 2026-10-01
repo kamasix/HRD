@@ -39,7 +39,15 @@ configure)
     if [ -f /etc/cordial-hrd/cordiald.toml ] && [ ! -f /etc/cordial-hrd/hrdd.toml ]; then
         echo "hrd: keeping your existing /etc/cordial-hrd/cordiald.toml (rename it to hrdd.toml when convenient)."
     fi
-    cat <<MSG
+    if [ -n "${2:-}" ]; then
+        cat <<MSG
+hrd is upgraded (from $2). Nothing has been restarted: the old programs keep running
+until you do it, and an old hrdd refuses the new hrdctl.
+  sudo systemctl restart hrd-netd hrdd      (and hrd-panel, if you use it)
+Running clients keep running; the new hrdd adopts them. See /usr/share/doc/hrd/install.md
+MSG
+    else
+        cat <<MSG
 hrd is installed. Nothing has been started or changed.
   1. sudo hrdctl init            (writes /etc/cordial-hrd/hrdd.toml, checks the machine)
   2. sudo systemctl enable --now hrd-netd hrdd
@@ -47,6 +55,7 @@ hrd is installed. Nothing has been started or changed.
   4. hrdctl runtime import --apk /path/to/roblox.apk
 See /usr/share/doc/hrd/install.md
 MSG
+    fi
     ;;
 esac
 exit 0

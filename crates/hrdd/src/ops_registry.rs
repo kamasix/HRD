@@ -158,14 +158,22 @@ pub fn account_add(
         }
     }
     let now = now_unix();
+    // A profile left on disk by an account that is no longer registered is kept, whatever
+    // happens below; only what this call makes is taken back if it cannot be saved.
+    let existed = d.layout.account_home(&name).exists();
     make_account_dirs(d, &name)?;
     let mut acct = new_account(&name, now, proxy_group);
     acct.labels = labels;
     acct.note = note.filter(|n| !n.is_empty());
-    commit(d, &mut inner, |reg| {
+    if let Err(e) = commit(d, &mut inner, |reg| {
         reg.accounts.insert(name.clone(), acct.clone());
         Ok(())
-    })?;
+    }) {
+        if !existed {
+            let _ = fsutil::remove_dir_all_if_exists(&d.layout.account_home(&name));
+        }
+        return Err(e);
+    }
     bring_up_account(d, &mut inner, &name, now);
     to(&views::account(&inner, &acct))
 }
@@ -762,14 +770,21 @@ pub fn account_assign(
         .filter(|a| !inner.reg.accounts.contains_key(*a))
         .cloned()
         .collect();
-    let forget_new_dirs = |created: &[AccountName]| {
-        for a in created {
+    // A profile left on disk by an account that is no longer registered is kept,
+    // whatever happens below; only the directories this call makes are taken back.
+    let fresh: Vec<AccountName> = created
+        .iter()
+        .filter(|a| !d.layout.account_home(a).exists())
+        .cloned()
+        .collect();
+    let forget_new_dirs = || {
+        for a in &fresh {
             let _ = fsutil::remove_dir_all_if_exists(&d.layout.account_home(a));
         }
     };
     for a in &created {
         if let Err(e) = make_account_dirs(d, a) {
-            forget_new_dirs(&created);
+            forget_new_dirs();
             return Err(e);
         }
     }
@@ -792,7 +807,7 @@ pub fn account_assign(
         Ok(v) => v,
         Err(e) => {
             // The accounts were not created, so neither are their directories.
-            forget_new_dirs(&created);
+            forget_new_dirs();
             return Err(e);
         }
     };
@@ -1277,6 +1292,155 @@ mod tests {
         assert!(matches!(e, Error::NotFound(_)), "{e}");
         group_create(&d, g("real"), None, None, None).unwrap();
         assert!(proxy_group_list(&d, Some(g("real"))).is_ok());
+    }
+
+    /// A stand-in for the network helper: it takes one request, says through `seen`
+    /// that it arrived, waits for `go`, and then answers with an empty success.
+    fn fake_helper(
+        d: &Daemon,
+        seen: std::sync::mpsc::Sender<()>,
+        go: std::sync::mpsc::Receiver<()>,
+    ) -> std::thread::JoinHandle<()> {
+        use std::io::{BufRead, Write};
+        let sock = d.layout.netd_socket();
+        std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&sock);
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let id = serde_json::from_str::<Value>(&line).unwrap()["id"].clone();
+            seen.send(()).unwrap();
+            go.recv().unwrap();
+            let mut stream = stream;
+            writeln!(stream, "{}", json!({ "id": id, "ok": true, "data": {} })).unwrap();
+        })
+    }
+
+    #[test]
+    fn a_proxy_cannot_be_taken_while_the_helper_is_being_asked_to_forget_it() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let d = daemon("removing-race");
+        define_proxy(&d, "n1");
+        group_create(&d, g("one"), None, None, None).unwrap();
+        let (seen_tx, seen_rx) = channel();
+        let (go_tx, go_rx) = channel();
+        let helper = fake_helper(&d, seen_tx, go_rx);
+        let remover = {
+            let d = d.clone();
+            std::thread::spawn(move || network_remove(&d, NetworkName::new("n1").unwrap()))
+        };
+        // The helper has the request, and the registry lock is free again: this is the
+        // window in which a proxy group could take the proxy.
+        seen_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let e = proxy_group_create(
+            &d,
+            pg("p"),
+            g("one"),
+            Some(NetworkName::new("n1").unwrap()),
+            5,
+            None,
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("being removed"), "{e}");
+        let e = network_remove(&d, NetworkName::new("n1").unwrap()).unwrap_err();
+        assert!(e.to_string().contains("already being removed"), "{e}");
+        go_tx.send(()).unwrap();
+        remover.join().unwrap().unwrap();
+        helper.join().unwrap();
+        let inner = d.lock();
+        assert!(inner.removing_networks.is_empty(), "the marker is gone");
+        assert!(inner.reg.networks.is_empty() && inner.reg.proxy_groups.is_empty());
+    }
+
+    #[test]
+    fn a_removal_whose_save_fails_neither_hangs_nor_forgets_the_proxy() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let d = daemon("removing-save-fails");
+        define_proxy(&d, "n1");
+        let (seen_tx, seen_rx) = channel();
+        let (go_tx, go_rx) = channel();
+        let helper = fake_helper(&d, seen_tx, go_rx);
+        let (done_tx, done_rx) = channel();
+        let remover = {
+            let d = d.clone();
+            std::thread::spawn(move || {
+                let r = network_remove(&d, NetworkName::new("n1").unwrap());
+                done_tx.send(r.is_err()).unwrap();
+            })
+        };
+        seen_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let path = d.layout.registry_file();
+        let _ = std::fs::remove_file(&path);
+        std::fs::create_dir(&path).unwrap();
+        go_tx.send(()).unwrap();
+        let failed = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("network_remove hung");
+        remover.join().unwrap();
+        helper.join().unwrap();
+        assert!(failed);
+        let inner = d.lock();
+        assert!(inner.removing_networks.is_empty());
+        assert!(inner
+            .reg
+            .networks
+            .contains_key(&NetworkName::new("n1").unwrap()));
+    }
+
+    #[test]
+    fn changes_to_proxies_and_accounts_that_cannot_be_saved_are_not_kept_in_memory() {
+        let d = crate::state::testing::daemon_with("unsaved", true);
+        define_proxy(&d, "n1");
+        account_add(&d, ac("a"), vec![], None, None).unwrap();
+        let path = d.layout.registry_file();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        // a proxy's exit address
+        let n1 = NetworkName::new("n1").unwrap();
+        assert!(network_set(&d, n1.clone(), Some("203.0.113.9".into()), None, None).is_err());
+        assert_eq!(d.lock().reg.networks[&n1].exit.configured, None);
+        // re-importing a proxy
+        let mut again = d.lock().reg.networks[&n1].clone();
+        again.endpoint = "198.51.100.1:51820".into();
+        assert!(network_register(&d, again).is_err());
+        assert_eq!(d.lock().reg.networks[&n1].endpoint, "203.0.113.1:51820");
+        // removing an account: it stays, with its runtime object, its directories and its record
+        assert!(account_remove(&d, ac("a"), "a".into()).is_err());
+        let inner = d.lock();
+        assert!(inner.reg.accounts.contains_key(&ac("a")));
+        assert!(inner.live.contains_key(&ac("a")));
+        assert!(d.layout.account_home(&ac("a")).exists());
+        assert!(d.layout.instance_record(&ac("a")).exists());
+    }
+
+    #[test]
+    fn a_failed_save_never_deletes_a_profile_that_was_there_before() {
+        let d = daemon("keep-profile");
+        group_create(&d, g("one"), None, None, None).unwrap();
+        proxy_group_create(&d, pg("p"), g("one"), None, 5, None).unwrap();
+        // the profile of an account that is not registered (a registry restored from a backup)
+        let keep = d.layout.account_data(&ac("old")).join("cordial");
+        std::fs::create_dir_all(&keep).unwrap();
+        std::fs::write(keep.join("cookies"), b"precious").unwrap();
+        let path = d.layout.registry_file();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(account_assign(&d, vec![ac("old"), ac("fresh")], Some(pg("p")), true).is_err());
+        assert!(account_add(&d, ac("old"), vec![], None, None).is_err());
+        assert!(
+            keep.join("cookies").exists(),
+            "what was on disk before is still there"
+        );
+        // what the failed call made itself is taken back
+        assert!(!d.layout.account_home(&ac("fresh")).exists());
+        assert!(account_add(&d, ac("also-fresh"), vec![], None, None).is_err());
+        assert!(!d.layout.account_home(&ac("also-fresh")).exists());
     }
 
     #[test]

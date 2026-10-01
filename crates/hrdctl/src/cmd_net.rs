@@ -313,6 +313,9 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
             if parsed.dns.is_empty() && dns.is_empty() {
                 return Err(Error::invalid("the file has no DNS line and --dns was not given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
             }
+            // The daemon is reached before the key is handed over: if it is down, nothing
+            // has been stored that the registry would not know about.
+            let mut daemon = ctx.client()?;
             let summary: NetworkSummary = netd(ctx).call(NetdRequest::PutNetwork {
                 name: name.clone(),
                 config: text,
@@ -329,7 +332,7 @@ pub fn proxy(ctx: &Ctx, c: ProxyCmd) -> Result<()> {
             net.stun_server = stun_server;
             net.max_clients = max_clients;
             net.exit.configured = exit_ip;
-            let v: NetworkView = ctx.client()?.call(Request::NetworkRegister {
+            let v: NetworkView = daemon.call(Request::NetworkRegister {
                 network: Box::new(net),
             })?;
             if ctx.out.json {

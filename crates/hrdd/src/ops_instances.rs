@@ -159,7 +159,7 @@ fn enqueue(d: &Daemon, account: &AccountName, ask: Ask) -> Result<InstanceView> 
                     return Err(Error::unavailable(format!(
                         "the proxy of proxy group {g} ({n}) is not usable: {} ({}); the client was not started because it would not be routed",
                         why.unwrap_or_default(),
-                        format!("{ready:?}").to_lowercase()
+                        ready.as_str()
                     )));
                 }
                 if let Some(max) = inner.reg.networks.get(n).and_then(|n| n.max_clients) {
@@ -541,7 +541,7 @@ pub fn status(d: &Daemon, f: Filter) -> Result<Value> {
     if let Some(g) = &f.group {
         if !inner.reg.groups.contains_key(g) {
             return Err(Error::not_found(format!(
-                "no group {g} (a proxy group is selected with proxy_group)"
+                "no group {g} (a proxy group is selected with --proxy-group)"
             )));
         }
     }
@@ -1060,6 +1060,27 @@ mod tests {
             ["b1"]
         );
         assert_eq!(ids(none()).len(), 4);
+        // a name that is not there is an error, not an empty answer (`--group` used to
+        // mean what `--proxy-group` means now)
+        let e = status(
+            &d,
+            Filter {
+                group: Some(g("de-1")),
+                ..none()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(e, Error::NotFound(_)), "{e}");
+        assert!(e.to_string().contains("--proxy-group"), "{e}");
+        let e = status(
+            &d,
+            Filter {
+                proxy_group: Some(pg("game")),
+                ..none()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(e, Error::NotFound(_)), "{e}");
         // the view says both names
         let v = status(
             &d,

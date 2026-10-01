@@ -7,7 +7,7 @@ remove|deconfigure)
     systemctl stop hrd-panel >/dev/null 2>&1 || true
     # Stopping the daemon leaves the clients running (KillMode=process); say so.
     if systemctl is-active --quiet hrdd 2>/dev/null; then
-        echo "hrd: stopping hrdd. Running clients are NOT stopped; use 'hrdctl stop-all' first if you want them gone."
+        echo "hrd: stopping hrdd. Running clients are NOT stopped: they keep running without a manager (\`hrdctl stop-all\`, run while hrdd is up, stops them)."
         systemctl stop hrdd || true
     fi
     systemctl stop hrd-netd >/dev/null 2>&1 || true

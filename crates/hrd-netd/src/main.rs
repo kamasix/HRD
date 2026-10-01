@@ -92,7 +92,14 @@ fn run() -> Result<()> {
     if uid == 0 {
         return Err(Error::invalid("service_user must not be root"));
     }
-    let gid = config::lookup_group(&groups, &cfg.service_group);
+    // Without its group the socket would stay root-only and the manager could never
+    // reach the helper, with nothing said about why.
+    let gid = config::lookup_group(&groups, &cfg.service_group).ok_or_else(|| {
+        Error::unavailable(format!(
+            "group {:?} does not exist; create it (the package does) or set service_group",
+            cfg.service_group
+        ))
+    })?;
     let store = store::NetStore::new(layout.netd_state_dir.clone());
     store.ensure()?;
 
@@ -111,7 +118,7 @@ fn run() -> Result<()> {
         reapply_recorded(&shared);
     }
 
-    let listener = server::bind(&layout.netd_socket(), gid, 0o660)?;
+    let listener = server::bind(&layout.netd_socket(), Some(gid), 0o660)?;
     eprintln!(
         "<6>hrd-netd {}: listening on {}",
         env!("CARGO_PKG_VERSION"),

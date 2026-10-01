@@ -372,7 +372,14 @@ mod socket_tests {
         let dir = std::env::temp_dir().join(format!("hrd-netd-bind-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("netd.sock");
-        let gid = rustix::process::getgid().as_raw();
+        // A group that is not the process's own, where that is allowed (root may give a
+        // file to any group), so that the chown is really what the test sees.
+        let own = rustix::process::getgid().as_raw();
+        let gid = if rustix::process::geteuid().is_root() {
+            65534
+        } else {
+            own
+        };
         let _listener = bind(&path, Some(gid), 0o660).unwrap();
         let meta = std::fs::metadata(&path).unwrap();
         // what a connecting process is checked against is this file, not the descriptor

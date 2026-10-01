@@ -19,7 +19,8 @@ mkdir -p "$T/stub" "$T/root"
 chmod 755 "$T/root"
 for t in ip wg nft; do printf '#!/bin/sh\nexit 0\n' > "$T/stub/$t"; chmod 755 "$T/stub/$t"; done
 printf 'service_user = "nobody"\nservice_group = "nogroup"\n' > "$T/netd.toml"
-chmod 644 "$T/netd.toml"
+printf 'service_user = "nobody"\nservice_group = "no-such-group-here"\n' > "$T/bad-group.toml"
+chmod 644 "$T/netd.toml" "$T/bad-group.toml"
 
 cat > "$T/client.py" <<'PY'
 import json, os, socket, sys
@@ -53,6 +54,8 @@ out=$(unshare -m bash -c '
   echo "service $(python3 "'"$T"'/client.py" "$S" service)"
   echo "root $(python3 "'"$T"'/client.py" "$S" root)"
   kill $pid; wait $pid 2>/dev/null
+  "'"$BIN"'/hrd-netd" --root "'"$T"'/root2" --config "'"$T"'/bad-group.toml" > "'"$T"'/bad.log" 2>&1
+  echo "missing-group exit $? $(head -c 160 "'"$T"'/bad.log" | tr "\n" " ")"
 ')
 echo "$out"
 fail=0
@@ -60,4 +63,5 @@ check() { if echo "$out" | grep -q "$1"; then echo "  ok: $2"; else echo "  FAIL
 check '^socket 660 root:nogroup' "the socket is 0660, root, and the service group's"
 check '^service {"ping_ok": true, "service_define": false, "define_error": "denied"}' "the service user connects, and may not define a proxy"
 check '^root {"ping_ok": true, "service_define": false, "define_error": "invalid"}' "root connects, and gets past the permission rule to the file check"
+check '^missing-group exit [1-9][0-9]* .*does not exist' "a service group that does not exist stops the helper with a message, instead of a socket nobody can reach"
 [ $fail -eq 0 ] && echo "netd socket check: ok" || { echo "netd socket check: FAILED"; exit 1; }

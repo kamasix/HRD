@@ -237,6 +237,17 @@ pub struct Account {
     pub mode: Option<ResourceMode>,
 }
 
+/// A place id that is not a valid one (a build before the check stored whatever a
+/// request carried, 0 included) is read as "not set" instead of making the whole
+/// registry unreadable; the operator types it again.
+fn lenient_place<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<PlaceId>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| v.as_u64())
+        .and_then(|n| PlaceId::new(n).ok()))
+}
+
 /// A named set of proxy groups that play the same place: the top of the
 /// hierarchy the operator sees (group, proxy groups, accounts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,7 +255,7 @@ pub struct Group {
     pub name: GroupName,
     /// The place every client of the group joins. Unset until the operator
     /// says; a start with no place of its own is refused until then.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_place")]
     pub place_id: Option<PlaceId>,
     /// Resource mode for the clients of this group. An account's own mode and a
     /// mode named in a start request both win over it.
@@ -682,6 +693,26 @@ impl InstanceRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_place_id_that_is_not_valid_is_read_as_unset_not_as_an_unreadable_registry() {
+        let json = br#"{"schema":2,
+            "groups":{"zero":{"name":"zero","place_id":0,"created_at":1},
+                      "huge":{"name":"huge","place_id":9007199254740993,"created_at":1},
+                      "fine":{"name":"fine","place_id":920587237,"created_at":1},
+                      "unset":{"name":"unset","created_at":1}}}"#;
+        let (r, upgraded) = Registry::from_slice(json).unwrap();
+        assert_eq!(upgraded, None);
+        let place = |n: &str| {
+            r.groups[&GroupName::new(n).unwrap()]
+                .place_id
+                .map(|p| p.get())
+        };
+        assert_eq!(place("zero"), None);
+        assert_eq!(place("huge"), None);
+        assert_eq!(place("fine"), Some(920587237));
+        assert_eq!(place("unset"), None);
+    }
 
     #[test]
     fn readiness_words_match_the_json() {

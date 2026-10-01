@@ -120,7 +120,9 @@ mod tests {
     #[test]
     fn a_root_helper_refuses_a_config_file_that_others_can_write_or_do_not_own() {
         if !rustix::process::geteuid().is_root() {
-            return; // the check is for the privileged helper; nothing to see as anyone else
+            // the check is for the privileged helper; nothing to see as anyone else
+            eprintln!("skipped: not running as root");
+            return;
         }
         let dir = std::env::temp_dir().join(format!("hrd-netd-cfg-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
