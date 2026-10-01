@@ -17,7 +17,7 @@ pub enum Error {
     /// Something the request names does not exist.
     NotFound(String),
     /// The request is fine but collides with current state: a name in use, a
-    /// profile held by another instance, a group that is full.
+    /// profile held by another instance, a proxy group that is full.
     Conflict(String),
     /// A dependency is missing or not reachable: the daemon is not running, no
     /// runtime is installed, the secret store is locked, a tunnel is down.

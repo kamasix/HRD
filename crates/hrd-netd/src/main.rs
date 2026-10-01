@@ -1,4 +1,7 @@
-//! `hrd-netd`: the privileged half of network groups.
+//! `hrd-netd`: the privileged half of proxy groups.
+//!
+//! In this program and in `hrd-net`, whose protocol it speaks, a *group* is a
+//! proxy group: the one unit that owns a network namespace and a tunnel.
 //!
 //! It does four things: stores WireGuard configurations the operator imported,
 //! creates a namespace per proxy group with a tunnel and a default-drop firewall in
@@ -118,7 +121,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-/// With `apply_on_start`, rebuild the groups the last `apply` recorded. It
+/// With `apply_on_start`, rebuild the proxy groups the last `apply` recorded. It
 /// only ever re-creates what the operator had already applied.
 fn reapply_recorded(shared: &Arc<server::Shared>) {
     use hrd_net::plan::GroupSpec;
@@ -140,7 +143,7 @@ fn reapply_recorded(shared: &Arc<server::Shared>) {
         return;
     }
     eprintln!(
-        "<6>hrd-netd: apply_on_start: re-applying {} recorded group(s)",
+        "<6>hrd-netd: apply_on_start: re-applying {} recorded proxy group(s)",
         specs.len()
     );
     let req = hrd_net::proto::NetdRequest::Apply {

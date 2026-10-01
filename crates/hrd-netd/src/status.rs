@@ -1,4 +1,4 @@
-//! Asking a group's namespace how it is.
+//! Asking a proxy group's namespace how it is.
 
 use std::time::Duration;
 

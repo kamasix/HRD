@@ -1,7 +1,7 @@
 //! The smallest STUN client that answers "what address do you see me as, over
 //! UDP?".
 //!
-//! This is how `network check` observes a group's exit. An HTTPS request to a
+//! This is how `proxy check` observes a proxy group's exit. An HTTPS request to a
 //! what's-my-IP page proves the TCP path; the game's transport is UDP, and a
 //! tunnel can carry one and not the other (a provider that blocks UDP, a
 //! gateway with only a TCP rule). A STUN binding request is one UDP datagram

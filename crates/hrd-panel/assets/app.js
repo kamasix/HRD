@@ -2,9 +2,11 @@
 // The panel page. It talks only to this origin and builds the DOM with
 // textContent / createElement (never innerHTML), so nothing it shows can inject
 // markup or script. Everything here is a view over the same commands as hrdctl.
+//
+// The main screen is the hierarchy the daemon keeps:
+//   group (a place) -> proxy groups (a proxy and its accounts) -> accounts.
 
 const $ = (s, r = document) => r.querySelector(s);
-const SVGNS = 'http://www.w3.org/2000/svg';
 
 function h(tag, props, ...kids) {
   const e = document.createElement(tag);
@@ -21,33 +23,11 @@ function h(tag, props, ...kids) {
   }
   return e;
 }
-
-const ICONS = {
-  play: 'M8 5v14l11-7z',
-  stop: 'M6 6h12v12H6z',
-  key: 'M7 14a4 4 0 1 1 3.9-5H21v3h-2v2h-3v-2h-5.1A4 4 0 0 1 7 14zm0-2.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
-  gear: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 4-2.1-.7a7 7 0 0 0-.6-1.4l1-2-2-2-2 1a7 7 0 0 0-1.4-.6L13 3h-2l-.7 2.1a7 7 0 0 0-1.4.6l-2-1-2 2 1 2a7 7 0 0 0-.6 1.4L3 11v2l2.1.7c.1.5.3 1 .6 1.4l-1 2 2 2 2-1c.4.3.9.5 1.4.6L11 21h2l.7-2.1c.5-.1 1-.3 1.4-.6l2 1 2-2-1-2c.3-.4.5-.9.6-1.4L21 13z',
-  net: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 2c.9 0 2 1.7 2.5 4h-5C10 6.7 11.1 5 12 5zM5.3 11a7 7 0 0 1 2.3-4.5C7.2 7.4 7 9 7 11zm0 2h1.7c0 2 .2 3.6.6 4.5A7 7 0 0 1 5.3 13z',
-  lock: 'M7 10V8a5 5 0 0 1 10 0v2h1v10H6V10zm2 0h6V8a3 3 0 0 0-6 0z',
-  cube: 'M12 2 3 7v10l9 5 9-5V7zm0 2.2 6.5 3.6L12 11.4 5.5 7.8zM5 9.6l6 3.4v6.8l-6-3.3z',
-  doc: 'M6 3h9l4 4v14H6zm8 1.5V8h3.5zM8 12h8v1.5H8zm0 3h8v1.5H8z',
-  plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
-  dots: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
-};
-function icon(name) {
-  const s = document.createElementNS(SVGNS, 'svg');
-  s.setAttribute('viewBox', '0 0 24 24');
-  s.setAttribute('fill', 'currentColor');
-  s.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(SVGNS, 'path');
-  p.setAttribute('d', ICONS[name]);
-  s.append(p);
-  return s;
-}
-const btn = (label, cls, fn, ic) => h('button', { class: cls || '', on: { click: fn } }, ic ? icon(ic) : null, label);
+const btn = (label, cls, fn, attrs) => h('button', { class: cls || '', type: 'button', on: { click: fn }, ...(attrs || {}) }, label);
 
 let csrf = null;
 let timer = null;
+let refreshHome = null; // set by the main screen so a dialog can ask it to redraw
 
 function toast(msg, bad) {
   const d = h('div', { class: bad ? 'bad' : '' }, msg);
@@ -70,7 +50,7 @@ async function act(fn, okMsg) {
 }
 
 const mib = (b) => (b == null ? '–' : Math.round(b / 1048576));
-const gib = (b) => (b == null ? '–' : (b / 1073741824).toFixed(1));
+const gib = (b) => (b == null ? '–' : (b / 1073741824).toFixed(1).replace('.', ','));
 function age(s) {
   if (s == null) return '–';
   if (s < 60) return s + ' s';
@@ -80,19 +60,37 @@ function age(s) {
 }
 const when = (t) => (t ? new Date(t * 1000).toLocaleString('pl-PL') : '–');
 const orDash = (v) => (v == null || v === '' ? '–' : v);
+const plural = (n, one, few, many) => (n === 1 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+
+// A name as the daemon accepts it: lowercase letters, digits and '-', starting
+// with a letter, at most 24 characters. Typing "Adopt Me" gives "adopt-me".
+function slug(v) {
+  let s = String(v).toLowerCase().replace(/ł/g, 'l').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '');
+  if (s && !/^[a-z]/.test(s)) s = 'g-' + s;
+  return s.slice(0, 24).replace(/-+$/, '');
+}
 
 const STATE = {
-  connected: ['Połączony', 't-ok'], starting: ['Uruchamianie', 't-warn'], joining: ['Wchodzi do gry', 't-warn'], queued: ['W kolejce', 't-warn'],
-  disconnected: ['Rozłączony', 't-violet'], stopped: ['Zatrzymany', 't-off'], failed: ['Błąd', 't-bad'], auth_required: ['Wymaga logowania', 't-bad'],
-  unknown: ['Nieznany', 't-info'], configured: ['Gotowy', 't-off'],
+  connected: ['połączony', 's-ok'], starting: ['uruchamianie', 's-warn'], joining: ['wchodzi do gry', 's-warn'], queued: ['w kolejce', 's-warn'],
+  disconnected: ['rozłączony', 's-violet'], stopped: ['zatrzymany', 's-off'], failed: ['błąd', 's-bad'], auth_required: ['wymaga logowania', 's-bad'],
+  unknown: ['nieznany', 's-info'], configured: ['gotowy', 's-off'],
 };
-function pill(state) {
-  const [label, cls] = STATE[state] || [String(state).replace(/_/g, ' '), 't-off'];
-  return h('span', { class: 'pill ' + cls }, label);
+function stateTag(state, noSession) {
+  // Nothing running and nothing stored to sign in with: "ready" would be a lie.
+  const [label, cls] = noSession ? ['wymaga logowania', 's-warn'] : STATE[state] || [String(state).replace(/_/g, ' '), 's-off'];
+  return h('span', { class: 'state ' + cls }, h('span', { class: 'dot ' + cls }), label);
 }
 const LIVE = ['queued', 'starting', 'joining', 'connected', 'unknown'];
+const needsLogin = (a) => a.auth === 'none' || a.auth === 'required' || a.state === 'auth_required';
 
-// ------------------------------------------------------------------ modal
+// What the helper says about a proxy, as a coloured word.
+const PROXY_STATE = {
+  ready: ['proxy gotowe', 's-ok'], unverified: ['proxy niezweryfikowane', 's-warn'], not_applied: ['proxy nie zastosowane', 's-warn'],
+  broken: ['proxy uszkodzone', 's-bad'], unknown: ['proxy: brak odpowiedzi', 's-info'],
+};
+
+// ------------------------------------------------------------------ small UI
 
 function modal(title, ...body) {
   const root = $('#modal-root');
@@ -101,203 +99,624 @@ function modal(title, ...body) {
   document.addEventListener('keydown', onKey);
   const veil = h('div', { class: 'veil', on: { mousedown: (e) => { if (e.target === veil) close(); } } },
     h('div', { class: 'modal', role: 'dialog', 'aria-label': title },
-      h('div', { class: 'mh' }, h('h2', {}, title), h('button', { class: 'ghost sm', on: { click: close } }, 'Zamknij')), ...body));
+      h('div', { class: 'mh' }, h('h2', {}, title), btn('Zamknij', 'ghost sm', close)), ...body));
   root.replaceChildren(veil);
+  const first = veil.querySelector('input:not([type=radio]):not([type=file]), textarea, select');
+  if (first) first.focus();
   return close;
 }
 function ask(title, text, okLabel, danger) {
   return new Promise((resolve) => {
     const close = modal(title, h('p', { class: 'muted' }, text),
-      h('div', { class: 'row' },
-        btn(okLabel, danger ? 'danger' : 'primary', () => { close(); resolve(true); }),
-        btn('Anuluj', 'ghost', () => { close(); resolve(false); })));
+      h('div', { class: 'foot' },
+        btn('Anuluj', '', () => { close(); resolve(false); }),
+        btn(okLabel, danger ? 'danger' : 'primary', () => { close(); resolve(true); })));
   });
 }
 
-// ------------------------------------------------------------------ frame
+let closeMenu = () => {};
+function menu(anchor, items) {
+  closeMenu();
+  const m = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean).map((it) => (it === 'sep'
+    ? h('hr')
+    : h('button', { class: 'mi' + (it.danger ? ' danger' : ''), role: 'menuitem', type: 'button', on: { click: () => { closeMenu(); it.fn(); } } }, it.label))));
+  document.body.append(m);
+  const r = anchor.getBoundingClientRect();
+  const top = Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 8);
+  m.style.top = Math.max(8, top) + 'px';
+  m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  const onDoc = (e) => { if (!m.contains(e.target) && e.target !== anchor) closeMenu(); };
+  const onKey = (e) => { if (e.key === 'Escape') closeMenu(); };
+  setTimeout(() => document.addEventListener('mousedown', onDoc), 0);
+  document.addEventListener('keydown', onKey);
+  closeMenu = () => { m.remove(); document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); closeMenu = () => {}; };
+  const f = m.querySelector('button'); if (f) f.focus();
+}
+
+// Keep a list of elements in step with data, one element per key, updated in
+// place: a refresh never replaces a button under the pointer (a click would be
+// lost) or an input being typed into.
+function syncKeyed(parent, items, keyOf, make, store) {
+  const els = [];
+  const seen = new Set();
+  for (const it of items) {
+    const k = keyOf(it);
+    seen.add(k);
+    let c = store.get(k);
+    if (!c) { c = make(it); store.set(k, c); }
+    c.update(it);
+    els.push(c.el);
+  }
+  for (const k of [...store.keys()]) if (!seen.has(k)) store.delete(k);
+  const now = [...parent.children];
+  if (now.length !== els.length || now.some((n, i) => n !== els[i])) parent.replaceChildren(...els);
+}
+
+// ------------------------------------------------------------------- frame
 
 function renderTop(active) {
   $('#app').replaceChildren(
     h('header', { class: 'top' },
-      h('div', { class: 'logo' }, h('i'), 'HRD'),
+      h('div', { class: 'logo' }, 'HRD'),
       h('nav', { class: 'tabs' },
-        h('a', { href: '#/', class: active === 'home' ? 'on' : '' }, 'Konta'),
+        h('a', { href: '#/', class: active === 'home' ? 'on' : '' }, 'Grupy'),
         h('a', { href: '#/settings', class: active === 'settings' ? 'on' : '' }, 'Ustawienia')),
-      h('span', { class: 'sp' }),
-      h('button', { class: 'ghost sm', on: { click: async () => { await act(() => raw('/api/logout', { method: 'POST', headers: hdr(), body: '{}' })); csrf = null; showLogin(); } } }, 'Wyloguj')),
+      h('span', { class: 'grow' }),
+      btn('Wyloguj', 'ghost sm', async () => { await act(() => raw('/api/logout', { method: 'POST', headers: hdr(), body: '{}' })); csrf = null; showLogin(); })),
     h('main', { id: 'main' }));
   return $('#main');
 }
 
 function showLogin() {
   clearInterval(timer);
-  const tok = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Token logowania', required: true });
-  const form = h('form', { class: 'card', on: { submit: async (ev) => {
+  const tok = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Token logowania', required: true, 'aria-label': 'Token logowania' });
+  const form = h('form', { on: { submit: async (ev) => {
     ev.preventDefault();
     try {
       const r = await raw('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok.value }) });
       csrf = r.csrf; tok.value = ''; route();
     } catch (e) { toast(e.message, true); }
-  } } },
-    h('label', { class: 'field' }, 'Token', tok),
-    h('button', { class: 'primary', type: 'submit' }, 'Zaloguj'));
+  } } }, tok, h('button', { class: 'primary', type: 'submit' }, 'Zaloguj'));
   $('#app').replaceChildren(h('div', { class: 'loginwrap' }, h('div', { class: 'login' },
-    h('div', { class: 'logo' }, h('i'), 'HRD'),
+    h('div', { class: 'logo' }, 'HRD'),
     h('p', { class: 'muted' }, 'Wpisz token, który wypisało „hrd-panel init”.'), form)));
   $('#modal-root').replaceChildren();
   tok.focus();
 }
 
-// ------------------------------------------------------------------ home
+// -------------------------------------------------------------------- home
+
+let last = null; // the latest overview, for the dialogs that need the whole picture
+
+const allProxyGroups = () => (last ? last.groups.flatMap((g) => g.proxy_groups) : []);
+const openState = (() => {
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem('hrd.open') || '{}'); } catch (_) { /* private mode */ }
+  return {
+    get: (k) => m[k],
+    set: (k, v) => { m[k] = v; try { localStorage.setItem('hrd.open', JSON.stringify(m)); } catch (_) { /* private mode */ } },
+  };
+})();
+
+function reportStart(r, what) {
+  const q = r.queued.length;
+  const skipped = r.skipped || [];
+  const running = skipped.filter((s) => /cannot be started|is (connected|starting|joining|queued|unknown)/.test(s.reason)).length;
+  const other = skipped.filter((s) => !/cannot be started|is (connected|starting|joining|queued|unknown)/.test(s.reason));
+  let msg = what + ': w kolejce ' + q;
+  if (running) msg += ', ' + running + ' już ' + plural(running, 'działa', 'działają', 'działa');
+  if (other.length) msg += ', pominięto ' + other.length + ': ' + other.slice(0, 2).map((s) => s.account + ': ' + s.reason).join('; ');
+  toast(msg, other.length > 0);
+}
 
 async function viewHome(root) {
-  let place = localStorage.getItem('place') || '';
-  const placeIn = h('input', { placeholder: 'Place ID gry', inputmode: 'numeric', value: place, 'aria-label': 'Place ID' });
-  placeIn.addEventListener('input', () => { place = placeIn.value.trim(); try { localStorage.setItem('place', place); } catch (_) { /* private mode */ } });
-  const statsBox = h('div', { class: 'stats' });
-  const cardsBox = h('div', { class: 'cards' });
-  const updBadge = h('span');
-
+  const groups = new Map();
+  const looseRows = new Map();
+  const sConnected = h('b'); const sRunning = h('b'); const sMem = h('b'); const sCpu = h('b');
+  const sRunningLabel = h('span');
+  const summary = h('div', { class: 'summary' });
+  const list = h('div', { class: 'groups' });
+  const loose = h('section', { class: 'loose' }, h('h2', {}, 'Bez grupy'));
+  const looseBox = h('div', { class: 'accts' });
+  loose.append(looseBox);
+  const empty = h('div', { class: 'empty' },
+    h('h2', {}, 'Zacznij od grupy'),
+    h('p', {}, 'Grupa to jedna gra (Place ID). W grupie dodajesz proxy, a do każdego proxy konta Roblox.'),
+    btn('Utwórz grupę', 'primary', () => newGroupModal()));
+  empty.hidden = true;
+  const stopAll = btn('Zatrzymaj wszystko', 'danger sm', async () => {
+    if (await ask('Zatrzymać wszystkie?', 'Wszystkie klienty zostaną zatrzymane, a kolejka wyczyszczona.', 'Zatrzymaj wszystko', true)) {
+      await act(() => call('stop_all', { force: false }), 'Zatrzymuję wszystko'); refresh();
+    }
+  });
+  const sErr = h('span', { class: 's-bad' });
+  // Built once and only their text changes, so a refresh never replaces a button
+  // under the pointer.
+  const sStats = h('span', { class: 'summary' }, h('span', {}, sConnected, ' połączonych'), h('span', {}, sRunning, sRunningLabel), h('span', {}, sMem, ' GB wolne'), h('span', {}, 'CPU ', sCpu));
+  summary.append(sStats, sErr, h('span', { class: 'grow' }), stopAll);
+  summary.hidden = true;
   root.replaceChildren(
-    h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Konta'), h('p', { class: 'sub' }, 'Uruchamiaj, zatrzymuj i sprawdzaj swoje konta.')),
-      btn('Dodaj konto', 'primary', addAccountModal, 'plus')),
-    statsBox,
-    h('div', { class: 'card startbar' },
-      h('b', {}, 'Place ID'), placeIn,
-      h('span', { class: 'hint grow' }, 'Użyj go przy każdym „Start”. Pamiętany w tej przeglądarce.'),
-      btn('Zatrzymaj wszystko', 'danger', async () => {
-        if (await ask('Zatrzymać wszystkie?', 'Wszystkie klienty zostaną zatrzymane, a kolejka wyczyszczona.', 'Zatrzymaj wszystko', true)) { await act(() => call('stop_all', { force: false }), 'Zatrzymuję wszystko'); refresh(); }
-      }, 'stop')),
-    cardsBox);
+    h('div', { class: 'head' }, h('h1', {}, 'Grupy'), h('span', { class: 'grow' }), btn('+ Nowa grupa', 'primary', () => newGroupModal())),
+    summary, empty, list, loose);
 
-  function statCard(k, v, unit, frac) {
-    return h('div', { class: 'stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v, unit ? h('small', {}, unit) : null),
-      frac != null ? h('div', { class: 'bar' }, (() => { const i = h('i'); i.style.width = Math.max(2, Math.min(100, frac * 100)) + '%'; return i; })()) : null);
-  }
-
-  async function startAccount(a) {
-    if (!place) { placeIn.focus(); toast('Wpisz najpierw Place ID gry', true); return; }
-    if (!/^[0-9]+$/.test(place)) { toast('Place ID to same cyfry', true); return; }
-    const r = await act(() => call('instance_start', { account: a.id, place_id: Number(place), group: null, private_server_code: null, mode: null }), a.id + ': w kolejce');
-    if (r) refresh();
-  }
-
-  // One card per account, updated in place so that a refresh never replaces a
-  // button under the pointer (a click would be lost) or resets scrolling.
-  const cardMap = new Map();
-  function makeCard(first) {
+  // ------------------------------------------------------------- accounts
+  function makeAcct(first, assigned) {
     let cur = first;
     let kind = null;
-    const nameEl = h('div', { class: 'name grow', title: first.id }, first.id);
-    const pillSlot = h('span');
-    const mUp = h('b'), mMem = h('b'), mCpu = h('b');
-    const why = h('div', { class: 'why' });
-    const actions = h('div', { class: 'actions' });
-    const more = btn('Więcej', 'sm', () => accountMenu(cur, needsLogin(cur), refresh), 'dots');
-    const el = h('div', { class: 'acct' },
-      h('div', { class: 'top2' }, nameEl, pillSlot),
-      h('div', { class: 'meta' }, h('div', {}, mUp, h('span', {}, 'działa')), h('div', {}, mMem, h('span', {}, 'pamięć')), h('div', {}, mCpu, h('span', {}, 'procesor'))),
-      why, actions);
-    const needsLogin = (x) => x.auth === 'none' || x.auth === 'required' || x.state === 'auth_required';
+    const nums = h('span', { class: 'nums' });
+    const why = h('span', { class: 'why' });
+    const stateSlot = h('span');
+    const acts = h('span', { class: 'acts' });
+    const more = btn('⋯', 'ghost sm', (e) => accountMenu(e.currentTarget, cur), { 'aria-label': 'Więcej: ' + first.id, 'aria-haspopup': 'menu' });
+    const el = h('div', { class: 'acct' }, h('span', { class: 'name', title: first.id }, first.id), stateSlot, nums, acts, why);
     function update(a) {
       cur = a;
       const m = a.mem || {};
       const live = LIVE.includes(a.state);
-      pillSlot.replaceChildren(pill(a.state));
-      mUp.textContent = live ? age(a.uptime_s) : '–';
-      mMem.textContent = m.pss_bytes != null ? mib(m.pss_bytes) + ' MB' : m.rss_bytes != null ? mib(m.rss_bytes) + ' MB' : '–';
-      mCpu.textContent = a.cpu_percent != null ? Math.round(a.cpu_percent) + '%' : '–';
-      why.textContent = a.reason || (a.group ? 'Grupa: ' + a.group : '');
-      const k = live ? 'stop' : needsLogin(a) ? 'login' : 'start';
+      stateSlot.replaceChildren(stateTag(a.state, !live && needsLogin(a)));
+      nums.textContent = live ? [age(a.uptime_s), m.pss_bytes != null ? mib(m.pss_bytes) + ' MB' : m.rss_bytes != null ? mib(m.rss_bytes) + ' MB' : null, a.cpu_percent != null ? Math.round(a.cpu_percent) + '%' : null].filter((x) => x && x !== '–').join(' · ') : '';
+      why.textContent = a.reason || '';
+      why.title = a.reason || '';
+      const k = !assigned ? 'assign' : live ? 'stop' : needsLogin(a) ? 'login' : 'start';
       if (k !== kind) {
         kind = k;
-        const primary = k === 'stop'
-          ? btn('Stop', 'danger grow', async () => { await act(() => call('instance_stop', { id: cur.id, force: false }), cur.id + ': zatrzymuję'); refresh(); }, 'stop')
-          : k === 'login'
-            ? btn('Zaloguj', 'primary grow', () => { location.hash = '#/login/' + cur.id; }, 'key')
-            : btn('Start', 'primary grow', () => startAccount(cur), 'play');
-        actions.replaceChildren(primary, more);
+        const primary = k === 'stop' ? btn('Stop', 'sm', async () => { await act(() => call('instance_stop', { id: cur.id, force: false }), cur.id + ': zatrzymuję'); refresh(); })
+          : k === 'login' ? btn('Zaloguj', 'primary sm', () => { location.hash = '#/login/' + cur.id; })
+          : k === 'assign' ? btn('Przypisz…', 'sm', () => moveAccountModal(cur))
+          : btn('Start', 'sm', async () => {
+            const r = await act(() => call('instance_start', { account: cur.id, place_id: null, proxy_group: null, private_server_code: null, mode: null }), cur.id + ': w kolejce');
+            if (r) refresh();
+          });
+        acts.replaceChildren(primary, more);
       }
     }
     update(first);
     return { el, update };
   }
 
-  async function refresh() {
-    let stats, rows;
-    try {
-      [stats, rows] = await Promise.all([
-        call('stats', { filter: {} }),
-        call('status', { filter: { states: [], group: null, label: null, accounts: [] } }),
-      ]);
-    } catch (e) { cardsBox.replaceChildren(h('p', { class: 'muted' }, e.message)); return; }
-    const connected = rows.filter((r) => r.state === 'connected').length;
-    const running = rows.filter((r) => LIVE.includes(r.state)).length;
-    const avail = stats.mem_available_bytes;
-    statsBox.replaceChildren(
-      statCard('Połączone', connected, ' / ' + rows.length, rows.length ? connected / rows.length : 0),
-      statCard('Uruchomione', running, ' klientów', null),
-      statCard('Wolna pamięć', gib(avail), 'GB', null),
-      statCard('Procesor', stats.total.cpu_percent != null ? Math.round(stats.total.cpu_percent) : '–', stats.total.cpu_percent != null ? '%' : '', null));
-    if (!rows.length) {
-      cardMap.clear();
-      cardsBox.replaceChildren(h('div', { class: 'card empty' }, h('h2', {}, 'Nie ma jeszcze kont'), h('p', {}, 'Dodaj pierwsze konto, zaloguj je i uruchom.'),
-        h('div', { class: 'row' }, btn('Dodaj konto', 'primary', addAccountModal, 'plus'))));
-      return;
-    }
-    const seen = new Set();
-    const els = rows.map((r) => {
-      seen.add(r.id);
-      let c = cardMap.get(r.id);
-      if (!c) { c = makeCard(r); cardMap.set(r.id, c); } else c.update(r);
-      return c.el;
+  // ----------------------------------------------------------- proxy groups
+  function makeProxyGroup(first) {
+    let cur = first;
+    const name = first.proxy_group.name;
+    const rows = new Map();
+    const open = () => (openState.get(name) !== undefined ? openState.get(name) : cur.accounts.length <= 8);
+    const chev = btn('', 'chev', () => { openState.set(name, !open()); paint(); }, { 'aria-label': 'Pokaż konta ' + name });
+    const meta = h('span', { class: 'pgmeta' });
+    let metaSig = '';
+    const accts = h('div', { class: 'accts' });
+    const foot = h('div', { class: 'pgfoot' }, btn('+ Dodaj konta', 'link', () => addAccountsModal(cur)));
+    const start = btn('Start', 'sm', async () => {
+      const r = await act(() => call('proxy_group_start', { name, place_id: null, private_server_code: null, mode: null }));
+      if (r) { reportStart(r, name); refresh(); }
     });
-    for (const id of [...cardMap.keys()]) if (!seen.has(id)) cardMap.delete(id);
-    // Re-attach only when the set or order changed.
-    const now = [...cardsBox.children];
-    if (now.length !== els.length || now.some((n, i) => n !== els[i])) cardsBox.replaceChildren(...els);
+    const stop = btn('Stop', 'sm', async () => {
+      if (await ask('Zatrzymać ' + name + '?', 'Działające klienty tej grupy proxy zostaną zatrzymane, a oczekujące anulowane.', 'Zatrzymaj', true)) {
+        await act(() => call('proxy_group_stop', { name, force: false }), name + ': zatrzymuję'); refresh();
+      }
+    });
+    const more = btn('⋯', 'ghost sm', (e) => menu(e.currentTarget, [
+      { label: 'Ustawienia…', fn: () => proxyGroupSettingsModal(cur) },
+      cur.proxy_group.network ? { label: 'Sprawdź wyjście', fn: () => checkExit(cur.proxy_group.network) } : null,
+      cur.proxy_group.network ? { label: 'Zastosuj proxy', fn: () => applyProxies(false) } : null,
+      'sep',
+      { label: 'Usuń grupę proxy…', danger: true, fn: () => removeProxyGroup(cur) },
+    ]), { 'aria-label': 'Więcej: ' + name, 'aria-haspopup': 'menu' });
+    const el = h('div', { class: 'pg' },
+      h('div', { class: 'pgh' }, chev, h('span', { class: 'pgname' }, name), meta, h('span', { class: 'grow' }), start, stop, more),
+      accts, foot);
+    function paint() {
+      const o = open();
+      accts.hidden = !o; foot.hidden = !o;
+      chev.textContent = o ? '▼' : '▶';
+      chev.setAttribute('aria-expanded', o ? 'true' : 'false');
+    }
+    function update(n) {
+      cur = n;
+      const p = n.proxy_group;
+      const connected = n.accounts.filter((a) => a.state === 'connected').length;
+      const ex = n.network && n.network.network.exit;
+      const addr = ex && ((ex.observed && ex.observed.address) || ex.configured);
+      const sig = [p.network, p.network_ready, p.network_reason, addr, ex && ex.observed ? 'o' : 'c', connected, p.assigned, p.capacity].join('|');
+      if (sig !== metaSig) {
+        metaSig = sig;
+        const bits = [];
+        if (!p.network) bits.push(h('span', { class: 'state s-warn' }, h('span', { class: 'dot s-warn' }), 'bez proxy'));
+        else {
+          const [label, cls] = PROXY_STATE[p.network_ready] || ['proxy', 's-off'];
+          bits.push(h('span', { class: 'state ' + cls, title: p.network_reason || '' }, h('span', { class: 'dot ' + cls }), label));
+          if (addr) bits.push(h('span', { title: ex.observed ? 'zaobserwowane wyjście' : 'oczekiwane wyjście' }, addr));
+          if (p.network_ready === 'not_applied' || p.network_ready === 'broken') bits.push(btn('Zastosuj', 'link', () => applyProxies(false)));
+        }
+        bits.push(h('span', {}, connected + '/' + p.assigned + ' połączonych · limit ' + p.capacity));
+        meta.replaceChildren(...bits);
+      }
+      stop.disabled = p.live === 0;
+      start.disabled = p.assigned === 0;
+      syncKeyed(accts, n.accounts, (a) => a.id, (a) => makeAcct(a, true), rows);
+      paint();
+    }
+    update(first);
+    return { el, update };
   }
+
+  // ----------------------------------------------------------------- groups
+  function makeGroup(first) {
+    let cur = first;
+    const name = first.group.name;
+    const pgs = new Map();
+    let dirty = false;
+    const place = h('input', { class: 'place', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Place ID', 'aria-label': 'Place ID grupy ' + name });
+    const savePlace = async () => {
+      const v = place.value.trim();
+      const stored = cur.group.place_id == null ? '' : String(cur.group.place_id);
+      if (v === stored) { dirty = false; return true; }
+      if (v !== '' && !/^[0-9]+$/.test(v)) { toast('Place ID to same cyfry', true); return false; }
+      const r = await act(() => call('group_set', { name, place_id: v === '' ? null : Number(v), clear_place_id: v === '', mode: null, clear_mode: false, note: null }), v === '' ? 'Usunięto Place ID' : 'Zapisano Place ID');
+      if (r === undefined) return false;
+      dirty = false; cur = { ...cur, group: r };
+      refresh();
+      return true;
+    };
+    place.addEventListener('input', () => { dirty = true; });
+    place.addEventListener('change', savePlace);
+    place.addEventListener('keydown', (e) => { if (e.key === 'Enter') place.blur(); });
+    const modeTag = h('span', { class: 'tag' });
+    const tally = h('span', { class: 'tally muted small' });
+    const pgBox = h('div', { class: 'pgs' });
+    const noPg = h('div', { class: 'empty-pg' }, 'Ta grupa nie ma jeszcze proxy.');
+    const start = btn('Start', 'primary sm', async () => {
+      if (!(await savePlace())) return;
+      if (place.value.trim() === '') { place.focus(); toast('Wpisz najpierw Place ID tej grupy', true); return; }
+      const r = await act(() => call('group_start', { group: name, place_id: null, private_server_code: null, mode: null }));
+      if (r) { reportStart(r, name); refresh(); }
+    });
+    const stop = btn('Stop', 'sm', async () => {
+      if (await ask('Zatrzymać grupę ' + name + '?', 'Działające klienty całej grupy zostaną zatrzymane, a oczekujące anulowane.', 'Zatrzymaj', true)) {
+        await act(() => call('group_stop', { name, force: false }), name + ': zatrzymuję'); refresh();
+      }
+    });
+    const more = btn('⋯', 'ghost sm', (e) => menu(e.currentTarget, [
+      { label: 'Ustawienia grupy…', fn: () => groupSettingsModal(cur.group) },
+      'sep',
+      { label: 'Usuń grupę…', danger: true, fn: () => removeGroup(cur) },
+    ]), { 'aria-label': 'Więcej: grupa ' + name, 'aria-haspopup': 'menu' });
+    const el = h('section', { class: 'group' },
+      h('header', { class: 'gh' },
+        h('h2', { class: 'gname' }, name),
+        h('label', { class: 'placeLabel' }, h('span', { class: 'muted small' }, 'Place'), place),
+        modeTag, h('span', { class: 'grow' }), tally, start, stop, more),
+      pgBox, noPg,
+      h('div', { class: 'gfoot' }, btn('+ Dodaj proxy', 'link', () => addProxyModal(name))));
+    function update(g) {
+      cur = g;
+      const v = g.group;
+      if (!dirty && document.activeElement !== place) place.value = v.place_id == null ? '' : String(v.place_id);
+      modeTag.textContent = v.mode ? 'tryb ' + v.mode : '';
+      modeTag.hidden = !v.mode;
+      const connected = g.proxy_groups.reduce((n, p) => n + p.accounts.filter((a) => a.state === 'connected').length, 0);
+      tally.textContent = v.accounts ? connected + '/' + v.accounts + ' połączonych' : '';
+      stop.disabled = v.live === 0;
+      start.disabled = v.accounts === 0;
+      noPg.hidden = g.proxy_groups.length > 0;
+      syncKeyed(pgBox, g.proxy_groups, (n) => n.proxy_group.name, makeProxyGroup, pgs);
+    }
+    update(first);
+    return { el, update };
+  }
+
+  // ---------------------------------------------------------------- refresh
+  let busy = false;
+  async function refresh() {
+    if (busy || document.hidden) return;
+    busy = true;
+    try {
+      const [ov, st] = await Promise.all([call('overview'), call('stats', { filter: {} })]);
+      last = ov;
+      const all = [...ov.groups.flatMap((g) => g.proxy_groups.flatMap((p) => p.accounts)), ...ov.unassigned];
+      const connected = all.filter((a) => a.state === 'connected').length;
+      const running = all.filter((a) => LIVE.includes(a.state)).length;
+      const cpu = st.total && st.total.cpu_percent != null ? Math.round(st.total.cpu_percent) + '%' : '–';
+      sConnected.textContent = connected;
+      sRunning.textContent = running;
+      sRunningLabel.textContent = ' ' + plural(running, 'uruchomiony', 'uruchomione', 'uruchomionych');
+      sMem.textContent = gib(st.mem_available_bytes);
+      sCpu.textContent = cpu;
+      sErr.textContent = '';
+      sStats.hidden = false;
+      stopAll.hidden = running === 0;
+      summary.hidden = all.length === 0;
+      empty.hidden = ov.groups.length > 0 || ov.unassigned.length > 0;
+      syncKeyed(list, ov.groups, (g) => g.group.name, makeGroup, groups);
+      syncKeyed(looseBox, ov.unassigned, (a) => a.id, (a) => makeAcct(a, false), looseRows);
+      loose.hidden = ov.unassigned.length === 0;
+    } catch (e) {
+      sErr.textContent = e.message;
+      sStats.hidden = true;
+      stopAll.hidden = true;
+      summary.hidden = false;
+    }
+    busy = false;
+  }
+  refreshHome = refresh;
   await refresh();
   timer = setInterval(refresh, 3000);
+  document.onvisibilitychange = () => { if (!document.hidden) refresh(); };
 }
 
-function addAccountModal() {
-  const names = h('textarea', { placeholder: 'konto-01\nkonto-02\n(jedno w linii; litery, cyfry i myślnik)' });
-  const close = modal('Dodaj konta',
-    h('p', { class: 'muted small' }, 'Dodajesz tylko profile swoich własnych kont. Logowanie robisz osobno, przyciskiem „Zaloguj”.'), names,
-    h('div', { class: 'row' }, btn('Dodaj', 'primary', async () => {
-      const list = names.value.split('\n').map((x) => x.trim()).filter(Boolean);
-      if (!list.length) { toast('Wpisz co najmniej jedną nazwę', true); return; }
-      let ok = 0;
-      for (const n of list) {
-        const r = await act(() => call('account_add', { name: n, labels: [], note: null, group: null }));
-        if (r) ok++;
-      }
-      if (ok) { toast('Dodano: ' + ok); close(); route(); }
-    })));
-  names.focus();
+// ------------------------------------------------------------------ dialogs
+
+function newGroupModal() {
+  const name = h('input', { placeholder: 'np. adopt-me', autocomplete: 'off', 'aria-label': 'Nazwa grupy' });
+  const id = h('div', { class: 'hint' });
+  const place = h('input', { placeholder: 'Place ID gry (można później)', inputmode: 'numeric', autocomplete: 'off', 'aria-label': 'Place ID' });
+  const err = h('div', { class: 'err' });
+  const refreshId = () => { id.textContent = name.value.trim() ? 'Nazwa w systemie: ' + (slug(name.value) || '–') : 'Małe litery, cyfry i myślnik.'; };
+  name.addEventListener('input', refreshId); refreshId();
+  const submit = async () => {
+    const n = slug(name.value);
+    const p = place.value.trim();
+    err.textContent = '';
+    if (!n) { err.textContent = 'Podaj nazwę grupy.'; return; }
+    if (p && !/^[0-9]+$/.test(p)) { err.textContent = 'Place ID to same cyfry.'; return; }
+    const r = await act(() => call('group_create', { name: n, place_id: p ? Number(p) : null, mode: null, note: null }), 'Utworzono grupę ' + n);
+    if (r) { close(); refreshHome && refreshHome(); }
+  };
+  const close = modal('Nowa grupa',
+    h('label', { class: 'field' }, 'Nazwa', name), id,
+    h('label', { class: 'field' }, 'Place ID', place), err,
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Utwórz', 'primary', submit)));
+  for (const i of [name, place]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
-function accountMenu(a, needsLogin, refresh) {
-  const close = modal(a.id,
-    h('div', { class: 'row' }, pill(a.state), h('span', { class: 'muted small' }, 'sesja: ' + orDash(a.auth))),
-    h('div', { class: 'list' },
-      item('Szczegóły i procesy', 'Pamięć, sygnały z gry, ostatnie linie logu', () => { close(); showDetail(a.id); }),
-      item('Pełny log', 'Ostatnie 300 linii', () => { close(); showLogs(a.id); }),
-      item(needsLogin ? 'Zaloguj konto' : 'Zaloguj ponownie', 'Otwiera okno klienta logowania w przeglądarce', () => { close(); location.hash = '#/login/' + a.id; }),
-      item('Wyloguj (usuń zapisaną sesję)', 'Konto będzie musiało zalogować się od nowa', async () => {
-        close();
-        if (await ask('Wylogować ' + a.id + '?', 'Zapisana sesja zostanie skasowana.', 'Wyloguj', true)) { await act(() => call('account_logout', { name: a.id }), 'Wylogowano'); refresh(); }
-      }),
-      item('Usuń konto', 'Kasuje profil, log i zapisaną sesję', () => {
-        close();
-        const conf = h('input', { placeholder: 'Wpisz nazwę konta: ' + a.id });
-        const c2 = modal('Usunąć ' + a.id + '?', h('p', { class: 'muted' }, 'Tego nie da się cofnąć. Aby potwierdzić, wpisz nazwę konta.'), conf,
-          h('div', { class: 'row' }, btn('Usuń', 'danger', async () => { const r = await act(() => call('account_remove', { name: a.id, confirm: conf.value }), 'Usunięto'); if (r !== undefined) { c2(); route(); } }), btn('Anuluj', 'ghost', () => c2())));
+function groupSettingsModal(g) {
+  const place = h('input', { inputmode: 'numeric', autocomplete: 'off', value: g.place_id == null ? '' : String(g.place_id), placeholder: 'Place ID', 'aria-label': 'Place ID' });
+  const mode = h('select', { 'aria-label': 'Tryb' }, [['', 'domyślny (z ustawień demona)'], ['compatible', 'compatible'], ['minimal', 'minimal'], ['aggressive', 'aggressive']]
+    .map(([v, l]) => h('option', { value: v, selected: (g.mode || '') === v }, l)));
+  const note = h('input', { value: g.note || '', maxlength: 200, placeholder: 'Notatka (opcjonalnie)', 'aria-label': 'Notatka' });
+  const err = h('div', { class: 'err' });
+  const close = modal('Grupa ' + g.name,
+    h('label', { class: 'field' }, 'Place ID', place),
+    h('label', { class: 'field' }, 'Tryb zasobów', mode),
+    h('label', { class: 'field' }, 'Notatka', note), err,
+    h('div', { class: 'foot' },
+      btn('Usuń grupę…', 'danger left', () => { close(); removeGroup({ group: g }); }),
+      btn('Anuluj', '', () => close()),
+      btn('Zapisz', 'primary', async () => {
+        const p = place.value.trim();
+        if (p && !/^[0-9]+$/.test(p)) { err.textContent = 'Place ID to same cyfry.'; return; }
+        const r = await act(() => call('group_set', {
+          name: g.name, place_id: p ? Number(p) : null, clear_place_id: !p && g.place_id != null,
+          mode: mode.value || null, clear_mode: !mode.value && !!g.mode, note: note.value.trim(),
+        }), 'Zapisano');
+        if (r) { close(); refreshHome && refreshHome(); }
       })));
 }
-function item(title, sub, fn) {
-  return h('button', { class: 'item', on: { click: fn } }, h('span', { class: 'grow' }, h('b', {}, title), h('div', { class: 'muted small' }, sub)));
+
+async function removeGroup(node) {
+  const g = node.group;
+  const pgs = g.proxy_groups;
+  const text = pgs
+    ? 'Usunięte zostaną też jej grupy proxy (' + pgs + '). Konta zostają zarejestrowane, ale bez grupy, a proxy zostają zdefiniowane i będzie można ich użyć ponownie.'
+    : 'Grupa jest pusta.';
+  if (!(await ask('Usunąć grupę ' + g.name + '?', text, 'Usuń', true))) return;
+  const r = await act(() => call('group_remove', { name: g.name, cascade: true }), 'Usunięto grupę ' + g.name);
+  if (r && pgs) await act(() => call('network_apply', { prune: true }));
+  refreshHome && refreshHome();
+}
+
+async function removeProxyGroup(node) {
+  const p = node.proxy_group;
+  const text = p.assigned
+    ? 'Konta (' + p.assigned + ') zostają zarejestrowane, ale bez grupy. Proxy zostaje zdefiniowane i będzie można go użyć ponownie.'
+    : 'Proxy zostaje zdefiniowane i będzie można go użyć ponownie.';
+  if (!(await ask('Usunąć grupę proxy ' + p.name + '?', text, 'Usuń', true))) return;
+  const r = await act(() => call('proxy_group_remove', { name: p.name, unassign: true }), 'Usunięto ' + p.name);
+  if (r) await act(() => call('network_apply', { prune: true }));
+  refreshHome && refreshHome();
+}
+
+async function applyProxies(prune) {
+  const r = await act(() => call('network_apply', { prune }));
+  if (!r) return r;
+  const bad = r.filter((o) => !o.ok);
+  if (bad.length) toast(bad.map((o) => o.group + ': ' + o.message).join('; '), true);
+  else toast('Proxy zastosowane');
+  refreshHome && refreshHome();
+  return r;
+}
+
+async function checkExit(network) {
+  const r = await act(() => call('network_check', { name: network }));
+  if (r) toast('Widziane wyjście: ' + r.observed + (r.matches_configured === false ? ' (INNE niż oczekiwane ' + r.configured + ')' : r.matches_configured ? ' (zgodne z oczekiwanym)' : ''), r.matches_configured === false);
+  refreshHome && refreshHome();
+}
+
+function pickGroupSelect(current) {
+  return h('select', { 'aria-label': 'Grupa' }, (last ? last.groups : []).map((g) => h('option', { value: g.group.name, selected: g.group.name === current }, g.group.name)));
+}
+
+function proxyGroupSettingsModal(node) {
+  const p = node.proxy_group;
+  const cap = h('input', { type: 'number', min: Math.max(1, p.assigned), max: 10000, value: p.capacity, 'aria-label': 'Limit kont' });
+  const grp = pickGroupSelect(p.group);
+  const note = h('input', { value: p.note || '', maxlength: 200, placeholder: 'Notatka (opcjonalnie)', 'aria-label': 'Notatka' });
+  const ex = node.network ? node.network.network.exit : null;
+  const exitIn = h('input', { value: (ex && ex.configured) || '', placeholder: 'np. 203.0.113.11', 'aria-label': 'Oczekiwane IP wyjścia' });
+  const stun = h('input', { value: (node.network && node.network.network.stun_server) || '', placeholder: 'host:port (opcjonalnie)', 'aria-label': 'Serwer STUN' });
+  const err = h('div', { class: 'err' });
+  const close = modal('Grupa proxy ' + p.name,
+    h('label', { class: 'field' }, 'Limit kont', cap),
+    h('label', { class: 'field' }, 'Grupa', grp),
+    h('label', { class: 'field' }, 'Notatka', note),
+    node.network ? h('label', { class: 'field' }, 'Oczekiwane IP wyjścia', exitIn) : null,
+    node.network ? h('label', { class: 'field' }, 'Serwer STUN do sprawdzania wyjścia (wybierasz sam; HRD nie łączy się z cudzym serwerem)', stun) : null,
+    err,
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Zapisz', 'primary', async () => {
+      const c = Number(cap.value);
+      if (!Number.isInteger(c) || c < 1) { err.textContent = 'Limit kont to liczba od 1.'; return; }
+      const r = await act(() => call('proxy_group_set', {
+        name: p.name, group: grp.value !== p.group ? grp.value : null, capacity: c !== p.capacity ? c : null,
+        network: null, clear_network: false, note: note.value.trim(),
+      }));
+      if (r === undefined) return;
+      if (node.network) {
+        const r2 = await act(() => call('network_set', { name: node.network.network.name, configured_exit: exitIn.value.trim(), stun_server: stun.value.trim(), max_clients: null }));
+        if (r2 === undefined) return;
+      }
+      toast('Zapisano'); close(); refreshHome && refreshHome();
+    })));
+}
+
+function addAccountsModal(node) {
+  const p = node.proxy_group;
+  const names = h('textarea', { placeholder: 'konto-01\nkonto-02\n(jedno w linii; małe litery, cyfry, myślnik i _)', 'aria-label': 'Nazwy kont' });
+  const free = Math.max(0, p.capacity - p.assigned);
+  const err = h('div', { class: 'err' });
+  const close = modal('Dodaj konta do ' + p.name,
+    h('p', { class: 'hint' }, 'Wolnych miejsc: ' + free + ' z ' + p.capacity + '. Dodajesz tylko profile swoich własnych kont; zalogujesz je osobno przyciskiem „Zaloguj”. Konta, które już istnieją (np. bez grupy), zostaną przeniesione tutaj.'),
+    names, err,
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Dodaj', 'primary', async () => {
+      const list = [...new Set(names.value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+      if (!list.length) { err.textContent = 'Wpisz co najmniej jedną nazwę.'; return; }
+      const r = await act(() => call('account_assign', { accounts: list, proxy_group: p.name, create_missing: true }));
+      if (r) { toast('Dodano: ' + r.assigned + (r.unchanged ? ', już były: ' + r.unchanged : '')); close(); refreshHome && refreshHome(); }
+    })));
+}
+
+function moveAccountModal(a) {
+  const sel = h('select', { 'aria-label': 'Grupa proxy' }, [
+    h('option', { value: '' }, '(bez grupy)'),
+    ...allProxyGroups().map((n) => h('option', { value: n.proxy_group.name, selected: n.proxy_group.name === a.proxy_group, disabled: n.proxy_group.name !== a.proxy_group && n.proxy_group.assigned >= n.proxy_group.capacity },
+      n.proxy_group.group + ' / ' + n.proxy_group.name + ' (' + n.proxy_group.assigned + '/' + n.proxy_group.capacity + ')')),
+  ]);
+  const close = modal('Przenieś ' + a.id,
+    h('label', { class: 'field' }, 'Do grupy proxy', sel),
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), btn('Przenieś', 'primary', async () => {
+      const r = await act(() => call('account_assign', { accounts: [a.id], proxy_group: sel.value || null, create_missing: false }), 'Przeniesiono');
+      if (r) { close(); refreshHome && refreshHome(); }
+    })));
+}
+
+// Add a proxy to a group: a new WireGuard file (which creates the proxy and a
+// proxy group of the same name) or one defined earlier that nothing uses yet.
+async function addProxyModal(group) {
+  const status = await raw('/api/proxy/status').catch(() => ({ helper: false, can_define: false }));
+  const free = last ? last.free_networks : [];
+  const taken = new Set([...allProxyGroups().map((n) => n.proxy_group.name), ...(last ? last.free_networks.map((n) => n.network.name) : [])]);
+  const useNew = status.can_define || !free.length;
+  const mode = { v: useNew ? 'new' : 'old' };
+
+  const name = h('input', { placeholder: 'np. de-1', autocomplete: 'off', 'aria-label': 'Nazwa proxy' });
+  const id = h('div', { class: 'hint' });
+  name.addEventListener('input', () => { id.textContent = name.value.trim() ? 'Nazwa w systemie: ' + (slug(name.value) || '–') : ''; });
+  let fileText = '';
+  const file = h('input', { type: 'file', accept: '.conf,text/plain', 'aria-label': 'Plik WireGuard' });
+  const fileInfo = h('div', { class: 'hint' });
+  file.addEventListener('change', async () => {
+    const f = file.files[0];
+    fileText = f ? await f.text() : '';
+    fileInfo.textContent = f ? 'Wczytano ' + f.name + ' (' + f.size + ' B)' : '';
+    if (f && !name.value.trim()) { name.value = f.name.replace(/\.conf$/i, ''); name.dispatchEvent(new Event('input')); }
+    sync();
+  });
+  const pasted = h('textarea', { placeholder: 'albo wklej zawartość pliku .conf', 'aria-label': 'Zawartość pliku WireGuard', spellcheck: 'false', autocomplete: 'off' });
+  pasted.addEventListener('input', sync);
+  const dns = h('input', { placeholder: 'np. 10.66.0.1', 'aria-label': 'Serwer DNS za tunelem' });
+  const dnsField = h('label', { class: 'field' }, 'Serwer DNS za tunelem (plik nie ma linii DNS, a klienty potrzebują resolvera za tunelem)', dns);
+  const exitIp = h('input', { placeholder: 'np. 203.0.113.11 (opcjonalnie)', 'aria-label': 'Oczekiwane IP wyjścia' });
+  const cap = h('input', { type: 'number', min: 1, max: 10000, value: 20, 'aria-label': 'Limit kont' });
+  const pick = h('select', { 'aria-label': 'Zdefiniowane proxy' }, free.map((n) => h('option', { value: n.network.name }, n.network.name + (n.network.exit.configured ? ' · ' + n.network.exit.configured : ''))));
+  const pgName = h('input', { value: free[0] ? free[0].network.name : '', autocomplete: 'off', 'aria-label': 'Nazwa grupy proxy' });
+  pick.addEventListener('change', () => { pgName.value = pick.value; });
+  const err = h('div', { class: 'err' });
+
+  const blocked = h('div', { class: 'note' },
+    h('b', {}, 'Dodawanie proxy z panelu jest wyłączone. '),
+    status.helper
+      ? 'Plik WireGuard zawiera klucz prywatny, więc domyślnie przyjmuje go tylko root. Możesz dodać proxy w terminalu: '
+      : 'Nie ma połączenia z hrd-netd (' + (status.error || 'nie działa') + '). Dodaj proxy w terminalu: ',
+    h('code', {}, 'sudo hrdctl proxy add NAZWA --wireguard-config PLIK.conf'),
+    status.helper ? '. Albo pozwól panelowi: ustaw allow_service_define = true w /etc/cordial-hrd/netd.toml i uruchom ponownie hrd-netd (wtedy każdy, kto zaloguje się do panelu, decyduje, którędy idzie ruch kont).' : '');
+  const newBox = h('div', { class: 'stack' }, h('label', { class: 'field' }, 'Nazwa', name), id,
+    h('label', { class: 'field' }, 'Plik WireGuard (.conf)', file), fileInfo, pasted, dnsField,
+    h('label', { class: 'field' }, 'Oczekiwane IP wyjścia', exitIp));
+  const oldBox = h('div', { class: 'stack' }, h('label', { class: 'field' }, 'Proxy', pick), h('label', { class: 'field' }, 'Nazwa grupy proxy', pgName));
+  const capField = h('label', { class: 'field' }, 'Limit kont w tej grupie proxy', cap);
+  function sync() {
+    const text = (pasted.value.trim() || fileText);
+    dnsField.hidden = !(text && !/^\s*DNS\s*=/mi.test(text));
+  }
+  function paint() {
+    const isNew = mode.v === 'new';
+    blocked.hidden = !(isNew && !status.can_define);
+    newBox.hidden = !(isNew && status.can_define);
+    oldBox.hidden = isNew;
+    submitB.disabled = isNew ? !status.can_define : !free.length;
+    sync();
+  }
+  const seg = (v, label, disabled) => h('label', {}, h('input', { type: 'radio', name: 'pmode', value: v, checked: mode.v === v, disabled: !!disabled, on: { change: () => { mode.v = v; paint(); } } }), label);
+  const submitB = btn('Dodaj', 'primary', async () => {
+    err.textContent = '';
+    const cp = Number(cap.value);
+    if (!Number.isInteger(cp) || cp < 1) { err.textContent = 'Limit kont to liczba od 1.'; return; }
+    let net;
+    let pg;
+    if (mode.v === 'new') {
+      const n = slug(name.value);
+      const text = pasted.value.trim() || fileText;
+      if (!n) { err.textContent = 'Podaj nazwę proxy.'; return; }
+      if (taken.has(n)) { err.textContent = 'Nazwa „' + n + '” jest już zajęta (nazwa proxy jest też nazwą jego grupy proxy).'; return; }
+      if (!text) { err.textContent = 'Wybierz plik .conf albo wklej jego zawartość.'; return; }
+      const body = { name: n, config: text, dns: dns.value.trim() ? [dns.value.trim()] : [], exit_ip: exitIp.value.trim() || null, stun_server: null, block_ipv6: false, max_clients: null };
+      submitB.disabled = true;
+      const r = await act(() => post('/api/proxy/add', body));
+      pasted.value = ''; fileText = ''; file.value = '';
+      if (r === undefined) { submitB.disabled = false; return; }
+      net = n; pg = n;
+      if (r.client_public_key) toast('Klucz publiczny tego klienta (dla bramki): ' + r.client_public_key);
+    } else {
+      net = pick.value; pg = slug(pgName.value);
+      if (!net || !pg) { err.textContent = 'Wybierz proxy i podaj nazwę grupy proxy.'; return; }
+      if (allProxyGroups().some((n) => n.proxy_group.name === pg)) { err.textContent = 'Grupa proxy „' + pg + '” już istnieje.'; return; }
+    }
+    const made = await act(() => call('proxy_group_create', { name: pg, group, network: net, capacity: cp, note: null }));
+    if (made === undefined) {
+      toast('Proxy „' + net + '” jest zapisane, ale nie dodano go do grupy. Zostaje na liście wolnych proxy.', true);
+      submitB.disabled = false; refreshHome && refreshHome(); return;
+    }
+    close();
+    await applyProxies(false);
+  });
+  const close = modal('Dodaj proxy do grupy ' + group,
+    h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Źródło proxy' }, seg('new', 'Nowy plik WireGuard'), seg('old', 'Zdefiniowane wcześniej' + (free.length ? ' (' + free.length + ')' : ''), !free.length)),
+    blocked, newBox, oldBox, capField, err,
+    h('div', { class: 'foot' }, btn('Anuluj', '', () => close()), submitB));
+  paint();
+}
+
+// ------------------------------------------------------------- account menu
+
+function accountMenu(anchor, a) {
+  const live = LIVE.includes(a.state);
+  menu(anchor, [
+    { label: 'Szczegóły i procesy', fn: () => showDetail(a.id) },
+    { label: 'Pełny log', fn: () => showLogs(a.id) },
+    { label: needsLogin(a) ? 'Zaloguj konto' : 'Zaloguj ponownie', fn: () => { location.hash = '#/login/' + a.id; } },
+    'sep',
+    !live ? { label: 'Przenieś do grupy proxy…', fn: () => moveAccountModal(a) } : null,
+    !live && a.proxy_group ? { label: 'Wyjmij z grupy', fn: async () => { const r = await act(() => call('account_assign', { accounts: [a.id], proxy_group: null, create_missing: false }), 'Wyjęto z grupy'); if (r) refreshHome && refreshHome(); } } : null,
+    { label: 'Wyloguj (usuń zapisaną sesję)', fn: async () => {
+      if (await ask('Wylogować ' + a.id + '?', 'Zapisana sesja zostanie skasowana; konto będzie musiało zalogować się od nowa.', 'Wyloguj', true)) { await act(() => call('account_logout', { name: a.id }), 'Wylogowano'); refreshHome && refreshHome(); }
+    } },
+    { label: 'Usuń konto…', danger: true, fn: () => {
+      const conf = h('input', { placeholder: 'Wpisz nazwę konta: ' + a.id, 'aria-label': 'Potwierdź nazwą konta' });
+      const c2 = modal('Usunąć ' + a.id + '?', h('p', { class: 'muted' }, 'Kasuje profil, log i zapisaną sesję. Tego nie da się cofnąć. Aby potwierdzić, wpisz nazwę konta.'), conf,
+        h('div', { class: 'foot' }, btn('Anuluj', '', () => c2()), btn('Usuń', 'danger', async () => {
+          const r = await act(() => call('account_remove', { name: a.id, confirm: conf.value }), 'Usunięto');
+          if (r !== undefined) { c2(); refreshHome && refreshHome(); }
+        })));
+    } },
+  ]);
 }
 
 async function showDetail(id) {
@@ -305,9 +724,9 @@ async function showDetail(id) {
   if (!d) return;
   const v = d.view, s = d.record.signals;
   modal(id,
-    h('div', { class: 'row' }, pill(v.state), h('span', { class: 'muted' }, v.reason || '')),
+    h('div', { class: 'row' }, stateTag(v.state), h('span', { class: 'muted' }, v.reason || '')),
     h('div', { class: 'kv small' },
-      ...[['Grupa', orDash(v.group)], ['Place', orDash(v.place_id)], ['Przebieg', v.run], ['Tryb', v.mode], ['Wersja Robloxa', orDash(v.runtime)], ['Sesja', v.auth],
+      ...[['Grupa', orDash(v.group)], ['Grupa proxy', orDash(v.proxy_group)], ['Place', orDash(v.place_id)], ['Przebieg', v.run], ['Tryb', v.mode], ['Wersja Robloxa', orDash(v.runtime)], ['Sesja', v.auth],
         ['Silnik załadowany', when(s.engine_loaded_at)], ['Zalogowany', when(s.signed_in_at)], ['Połączony', when(s.connected_at)], ['Rozłączony', when(s.disconnected_at)],
         ['Kod rozłączenia (Roblox)', orDash(s.disconnect_code)], ['Ostatni ekran', orDash(s.screen)],
         ['RSS / PSS / USS (MB)', v.mem ? [mib(v.mem.rss_bytes), mib(v.mem.pss_bytes), mib(v.mem.uss_bytes)].join(' / ') : '–']]
@@ -320,13 +739,13 @@ async function showLogs(id) {
   if (l) modal('Log: ' + id, h('pre', {}, l.join('\n')));
 }
 
-// ------------------------------------------------------------------ login
+// ------------------------------------------------------------------- login
 
 async function viewLogin(root, acct) {
   const img = h('img', { class: 'shot', alt: 'Okno klienta logowania' });
   const status = h('p', { class: 'muted' }, 'Gotowy. Kliknij „Uruchom okno logowania”.');
-  const text = h('input', { placeholder: 'Tekst do wpisania', class: 'grow' });
-  const pass = h('input', { type: 'password', placeholder: 'Hasło (nie jest pokazywane)', autocomplete: 'off', class: 'grow' });
+  const text = h('input', { placeholder: 'Tekst do wpisania', class: 'grow', 'aria-label': 'Tekst do wpisania' });
+  const pass = h('input', { type: 'password', placeholder: 'Hasło (nie jest pokazywane)', autocomplete: 'off', class: 'grow', 'aria-label': 'Hasło' });
   let natural = { w: 1, h: 1 };
   const shot = () => { img.src = '/api/shot/' + encodeURIComponent(acct) + '?t=' + Date.now(); };
   img.addEventListener('load', () => { natural = { w: img.naturalWidth, h: img.naturalHeight }; });
@@ -337,7 +756,7 @@ async function viewLogin(root, acct) {
     setTimeout(shot, 1200);
   });
   const send = async (action) => { await act(() => call('login_input', { name: acct, action })); setTimeout(shot, 1200); };
-  const key = (k, label) => h('button', { class: 'sm', on: { click: () => send({ do: 'key', key: k }) } }, label);
+  const key = (k, label) => btn(label, 'sm', () => send({ do: 'key', key: k }));
 
   async function poll() {
     clearInterval(timer);
@@ -355,27 +774,24 @@ async function viewLogin(root, acct) {
   }
 
   root.replaceChildren(
-    h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Logowanie: ' + acct),
-      h('p', { class: 'sub' }, 'Widzisz ekran logowania klienta. Klikasz na obrazie, wpisujesz hasło i ewentualny kod. Każde kliknięcie to jedna Twoja akcja, nic nie dzieje się samo.')),
-      btn('Wróć', 'ghost', () => { location.hash = '#/'; })),
-    h('div', { class: 'card' }, h('div', { class: 'row' },
-      btn('Uruchom okno logowania', 'primary', async () => { const r = await act(() => call('login_start', { name: acct })); if (r) poll(); }, 'play'),
+    h('div', { class: 'head' }, h('h1', {}, 'Logowanie: ' + acct), h('span', { class: 'grow' }), btn('Wróć', '', () => { location.hash = '#/'; })),
+    h('p', { class: 'muted' }, 'Widzisz ekran logowania klienta. Klikasz na obrazie, wpisujesz hasło i ewentualny kod. Każde kliknięcie to jedna Twoja akcja, nic nie dzieje się samo.'),
+    h('div', { class: 'row' },
+      btn('Uruchom okno logowania', 'primary', async () => { const r = await act(() => call('login_start', { name: acct })); if (r) poll(); }),
       btn('Odśwież obraz', '', shot),
-      btn('Zatrzymaj', 'danger', () => act(() => call('login_cancel', { name: acct }), 'Zatrzymuję'), 'stop')),
-      status),
-    img,
-    h('div', { class: 'card' },
-      h('div', { class: 'row' }, text, btn('Wpisz tekst', '', () => { send({ do: 'text', text: text.value }); text.value = ''; })),
-      h('div', { class: 'row' }, pass, btn('Wpisz hasło', '', () => { send({ do: 'text', text: pass.value }); pass.value = ''; })),
-      h('div', { class: 'row tight' }, key('enter', 'Enter'), key('tab', 'Tab'), key('backspace', '⌫'), key('escape', 'Esc'), key('space', 'Spacja'), key('up', '↑'), key('down', '↓'), key('left', '←'), key('right', '→'))));
+      btn('Zatrzymaj', 'danger', () => act(() => call('login_cancel', { name: acct }), 'Zatrzymuję'))),
+    status, img,
+    h('div', { class: 'row' }, text, btn('Wpisz tekst', '', () => { send({ do: 'text', text: text.value }); text.value = ''; })),
+    h('div', { class: 'row' }, pass, btn('Wpisz hasło', '', () => { send({ do: 'text', text: pass.value }); pass.value = ''; })),
+    h('div', { class: 'row tight' }, key('enter', 'Enter'), key('tab', 'Tab'), key('backspace', '⌫'), key('escape', 'Esc'), key('space', 'Spacja'), key('up', '↑'), key('down', '↓'), key('left', '←'), key('right', '→')));
   poll();
 }
 
 // --------------------------------------------------------------- settings
 
-function section(ic, title, summary, open, ...body) {
+function section(title, summary, open, ...body) {
   return h('details', { class: 'sec', open: open ? true : false },
-    h('summary', {}, h('span', { class: 'ico' }, icon(ic)), h('span', { class: 'grow' }, title, summary ? h('div', { class: 'muted small' }, summary) : null)),
+    h('summary', {}, h('span', { class: 'grow' }, title, summary ? h('span', { class: 'muted small' }, '  ' + summary) : null)),
     h('div', { class: 'body' }, ...body));
 }
 function toggle(checked, onchange) {
@@ -384,7 +800,7 @@ function toggle(checked, onchange) {
 }
 
 async function viewSettings(root) {
-  root.replaceChildren(h('div', { class: 'head' }, h('div', { class: 'grow' }, h('h1', {}, 'Ustawienia'), h('p', { class: 'sub' }, 'Roblox, sekrety i sieć. Resztę zwykle wystarczy zostawić.'))));
+  root.replaceChildren(h('div', { class: 'head' }, h('h1', {}, 'Ustawienia')));
   const [rt, upd, sec, cfg] = await Promise.all([
     call('runtime_list').catch(() => []), call('runtime_update_status').catch(() => null), call('secrets_status').catch(() => null), call('config_get').catch(() => null),
   ]);
@@ -400,9 +816,9 @@ async function viewSettings(root) {
   showUpd(upd);
   const interval = h('select', { 'aria-label': 'Co ile godzin' }, [1, 3, 6, 12, 24, 72].map((n) => h('option', { value: n, selected: cfg && cfg.effective.runtime && cfg.effective.runtime.check_interval_h === n }, 'co ' + n + ' h')));
   interval.addEventListener('change', () => act(() => call('config_set', { changes: [{ key: 'runtime.check_interval_h', value: Number(interval.value) }] }), 'Zapisano'));
-  const files = h('input', { type: 'file', multiple: true, accept: '.apk' });
+  const files = h('input', { type: 'file', multiple: true, accept: '.apk', 'aria-label': 'Pliki APK' });
   const prog = h('p', { class: 'muted small' });
-  const robloxSec = section('cube', 'Roblox', current ? 'Aktualna wersja: ' + current.version : 'Brak zainstalowanej wersji', !current,
+  const robloxSec = section('Roblox', current ? 'wersja ' + current.version : 'brak zainstalowanej wersji', !current,
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('b', {}, 'Automatyczna aktualizacja'), h('div', { class: 'muted small' }, 'Sprawdza nową wersję w tle, pobiera ją i sprawdza podpis Roblox. Działające klienty nie są ruszane.')),
       toggle(cfg ? !!(cfg.effective.runtime && cfg.effective.runtime.auto_update) : false, (on, el) => act(() => call('config_set', { changes: [{ key: 'runtime.auto_update', value: on }] }), on ? 'Aktualizacje włączone' : 'Aktualizacje wyłączone').then((r) => { if (r === undefined) el.checked = !on; })),
       interval),
@@ -411,10 +827,10 @@ async function viewSettings(root) {
       if (!r) return;
       showUpd(r);
       const t = setInterval(async () => { try { const u = await call('runtime_update_status'); showUpd(u); if (!u.running) { clearInterval(t); route(); } } catch (_) { clearInterval(t); } }, 2500);
-    }, 'cube'), updLine),
+    }), updLine),
     builds.length ? h('div', { class: 'list' }, builds.map((b) => h('div', { class: 'item' },
       h('span', { class: 'grow' }, h('b', {}, b.version), ' ', h('span', { class: 'muted small' }, (b.abi || '') + (b.label ? ' · ' + b.label : ''))),
-      b.current ? h('span', { class: 'pill t-ok' }, 'używana') : btn('Użyj', 'sm', async () => { await act(() => call('runtime_use', { version: b.version }), 'Wybrano ' + b.version); route(); }),
+      b.current ? h('span', { class: 'state s-ok' }, h('span', { class: 'dot s-ok' }), 'używana') : btn('Użyj', 'sm', async () => { await act(() => call('runtime_use', { version: b.version }), 'Wybrano ' + b.version); route(); }),
       b.current ? null : btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć ' + b.version + '?', 'Pliki tej wersji zostaną skasowane.', 'Usuń', true)) { await act(() => call('runtime_remove', { version: b.version }), 'Usunięto'); route(); } })))) : null,
     h('details', {}, h('summary', { class: 'muted small' }, 'Zainstaluj z własnych plików APK'),
       h('div', { class: 'row' }, files, btn('Wgraj i zainstaluj', '', async () => {
@@ -435,49 +851,44 @@ async function viewSettings(root) {
       })), prog));
 
   // --- secrets
-  const pass = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Hasło do magazynu sekretów', class: 'grow' });
+  const pass = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Hasło do magazynu sekretów', class: 'grow', 'aria-label': 'Hasło do magazynu sekretów' });
   const create = h('input', { type: 'checkbox' });
   const ready = sec && sec.state === 'ready';
-  const secretsSec = section('lock', 'Magazyn sekretów', sec ? (ready ? 'Odblokowany' : 'Zablokowany – klienty nie wystartują') : '', !ready,
+  const secretsSec = section('Magazyn sekretów', sec ? (ready ? 'odblokowany' : 'zablokowany – klienty nie wystartują') : '', !ready,
     sec ? h('p', { class: 'muted small' }, sec.detail) : null,
     h('div', { class: 'row' }, pass, btn('Odblokuj', 'primary', async () => { const r = await act(() => call('secrets_unlock', { passphrase: pass.value, create: create.checked }), 'Odblokowano'); pass.value = ''; if (r) route(); }),
       ready ? btn('Zablokuj', '', async () => { await act(() => call('secrets_lock'), 'Zablokowano'); route(); }) : null),
     h('label', { class: 'row small muted' }, create, 'To pierwszy raz: utwórz nowy magazyn (min. 12 znaków; nie da się odzyskać hasła)'));
 
-  // --- groups & networks
-  const [groups, nets] = await Promise.all([call('group_list').catch(() => []), call('network_list').catch(() => [])]);
-  const gname = h('input', { placeholder: 'Nazwa grupy' });
-  const gnet = h('select', {}, h('option', { value: '' }, 'bez sieci'), nets.map((n) => h('option', { value: n.network.name }, n.network.name)));
-  const gcap = h('input', { type: 'number', min: 1, value: 20, 'aria-label': 'Pojemność' });
+  // --- proxies
+  const [nets, proxy] = await Promise.all([call('network_list').catch(() => []), raw('/api/proxy/status').catch(() => ({ helper: false, can_define: false }))]);
   const planOut = h('pre');
   planOut.hidden = true;
-  const netSec = section('net', 'Sieć i grupy', groups.length + ' grup, ' + nets.length + ' sieci', false,
-    h('p', { class: 'muted small' }, 'Grupa łączy konta z jedną siecią (tunelem WireGuard). Nową sieć dodaje się w terminalu, bo wymaga roota: sudo hrdctl network add NAZWA --wireguard-config PLIK.conf'),
-    groups.length ? h('div', { class: 'list' }, groups.map((g) => h('div', { class: 'item' },
-      h('span', { class: 'grow' }, h('b', {}, g.name), ' ', h('span', { class: 'muted small' }, (g.network ? 'sieć ' + g.network : 'bez sieci') + ' · ' + g.assigned + '/' + g.capacity + ' kont')),
-      btn('Start grupy', 'sm', async () => {
-        const place = localStorage.getItem('place') || '';
-        if (!/^[0-9]+$/.test(place)) { toast('Wpisz najpierw Place ID na stronie Konta', true); return; }
-        const r = await act(() => call('group_start', { group: g.name, place_id: Number(place), private_server_code: null, mode: null }));
-        if (r) toast(r.queued.length + ' w kolejce' + (r.skipped.length ? ', pominięto ' + r.skipped.length + ': ' + r.skipped.slice(0, 3).map((s) => s.account + ': ' + s.reason).join('; ') : ''), r.skipped.length > 0);
-      }),
-      btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć grupę ' + g.name + '?', 'Konta zostają, tracą tylko przypisanie.', 'Usuń', true)) { await act(() => call('group_remove', { name: g.name }), 'Usunięto'); route(); } })))) : null,
-    h('div', { class: 'row' }, gname, gnet, gcap, btn('Utwórz grupę', '', async () => { const r = await act(() => call('group_create', { name: gname.value.trim(), network: gnet.value || null, capacity: Number(gcap.value), note: null }), 'Utworzono'); if (r) route(); })),
-    nets.length ? h('div', { class: 'list' }, nets.map((n) => h('div', { class: 'item' },
-      h('span', { class: 'grow' }, h('b', {}, n.network.name), ' ', h('span', { class: 'muted small' }, n.readiness + (n.network.exit.configured ? ' · wyjście ' + n.network.exit.configured : ''))),
-      btn('Sprawdź wyjście', 'sm', async () => { const r = await act(() => call('network_check', { name: n.network.name })); if (r) { toast('Widziane wyjście: ' + r.observed + (r.matches_configured === false ? ' (INNE niż skonfigurowane)' : '')); route(); } }),
-      btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć sieć ' + n.network.name + '?', 'Jej klucz zostanie skasowany.', 'Usuń', true)) { await act(() => call('network_remove', { name: n.network.name }), 'Usunięto'); route(); } })))) : null,
+  const proxySec = section('Proxy', nets.length + ' ' + plural(nets.length, 'zdefiniowane', 'zdefiniowane', 'zdefiniowanych'), false,
+    h('p', { class: 'muted small' }, 'Proxy to tunel WireGuard, którym wychodzą konta jednej grupy proxy. Dodajesz je w grupie (przycisk „+ Dodaj proxy”). Tu widać wszystkie zdefiniowane i można zastosować zmiany w sieci.'),
+    h('p', { class: 'small ' + (proxy.can_define ? 's-ok' : 'muted') }, proxy.helper
+      ? (proxy.can_define ? 'Dodawanie proxy z panelu: włączone.' : 'Dodawanie proxy z panelu: wyłączone (allow_service_define w /etc/cordial-hrd/netd.toml). W terminalu: sudo hrdctl proxy add NAZWA --wireguard-config PLIK.conf')
+      : 'Brak połączenia z hrd-netd: ' + (proxy.error || 'nie działa')),
+    nets.length ? h('div', { class: 'list' }, nets.map((n) => {
+      const [label, cls] = PROXY_STATE[n.readiness] || [n.readiness, 's-off'];
+      const used = n.proxy_groups.length ? n.proxy_groups.join(', ') : null;
+      return h('div', { class: 'item' },
+        h('span', { class: 'grow' }, h('b', {}, n.network.name), ' ', h('span', { class: 'muted small' }, (used ? 'grupa proxy ' + used : 'wolne') + (n.network.exit.configured ? ' · wyjście ' + n.network.exit.configured : ''))),
+        h('span', { class: 'state ' + cls }, h('span', { class: 'dot ' + cls }), label),
+        used ? btn('Sprawdź wyjście', 'sm', () => checkExit(n.network.name)) : null,
+        used ? null : btn('Usuń', 'sm danger', async () => { if (await ask('Usunąć proxy ' + n.network.name + '?', 'Jego klucz zostanie skasowany z magazynu pomocnika.', 'Usuń', true)) { await act(() => call('network_remove', { name: n.network.name }), 'Usunięto'); route(); } }));
+    })) : null,
     nets.length ? h('div', { class: 'row' },
       btn('Pokaż plan zmian', '', async () => { const r = await act(() => call('network_plan')); if (r) { planOut.hidden = false; planOut.textContent = r.text.join('\n') + '\n\nNiczego nie zmieniono.'; } }),
-      btn('Zastosuj', 'primary', async () => { if (await ask('Zastosować plan sieci?', 'Grupy z działającymi klientami nie są przebudowywane.', 'Zastosuj')) { const r = await act(() => call('network_apply', { prune: true })); if (r) { planOut.hidden = false; planOut.textContent = r.map((o) => o.group + ': ' + o.action + (o.ok ? '' : ' BŁĄD') + ' ' + o.message).join('\n'); } } })) : null,
+      btn('Zastosuj', 'primary', async () => { if (await ask('Zastosować plan sieci?', 'Grupy proxy z działającymi klientami nie są przebudowywane.', 'Zastosuj')) { const r = await act(() => call('network_apply', { prune: true })); if (r) { planOut.hidden = false; planOut.textContent = r.map((o) => o.group + ': ' + o.action + (o.ok ? '' : ' BŁĄD') + ' ' + o.message).join('\n'); } } })) : null,
     planOut);
 
   // --- advanced
   const advBody = h('div');
-  const advSec = section('gear', 'Zaawansowane', 'Diagnostyka i wszystkie ustawienia demona', false, advBody);
+  const advSec = section('Zaawansowane', 'diagnostyka i wszystkie ustawienia demona', false, advBody);
   advSec.addEventListener('toggle', async () => { if (advSec.open && !advBody.childNodes.length) await buildAdvanced(advBody, cfg); }, { once: false });
 
-  root.append(robloxSec, secretsSec, netSec, advSec);
+  root.append(robloxSec, secretsSec, proxySec, advSec);
 }
 
 const ENUMS = { default_mode: ['compatible', 'minimal', 'aggressive'], compositor: ['cage', 'external'], graphics: ['auto', 'software', 'gpu'], join_url_via: ['argv', 'env'], backend: ['secret_service', 'none'], on_daemon_stop: ['keep', 'stop'] };
@@ -485,7 +896,7 @@ const ENUMS = { default_mode: ['compatible', 'minimal', 'aggressive'], composito
 async function buildAdvanced(box, c) {
   box.replaceChildren(h('p', { class: 'muted small' }, 'Wczytuję…'));
   const checks = await act(() => call('daemon_doctor')) || [];
-  const cls = { ok: 't-ok', warn: 't-warn', fail: 't-bad', info: 't-info' };
+  const cls = { ok: 's-ok', warn: 's-warn', fail: 's-bad', info: 's-info' };
   const inputs = [];
   const sections = c ? Object.entries(c.effective).map(([sec, vals]) => h('details', {}, h('summary', { class: 'small' }, sec),
     h('div', { class: 'kv small' }, Object.entries(vals).flatMap(([k, v]) => {
@@ -503,9 +914,9 @@ async function buildAdvanced(box, c) {
     })))) : [];
   box.replaceChildren(
     h('h2', {}, 'Diagnostyka'),
-    h('div', { class: 'list' }, checks.map((x) => h('div', { class: 'item small' }, h('span', { class: 'pill ' + (cls[x.status] || 't-off') }, x.status), h('span', { class: 'grow' }, h('b', {}, x.title), ' ', h('span', { class: 'muted' }, x.detail), x.fix ? h('div', { class: 'muted' }, 'Naprawa: ' + x.fix) : null)))),
+    h('div', { class: 'list' }, checks.map((x) => h('div', { class: 'item small' }, h('span', { class: 'state ' + (cls[x.status] || 's-off') }, h('span', { class: 'dot ' + (cls[x.status] || 's-off') }), x.status), h('span', { class: 'grow' }, h('b', {}, x.title), ' ', h('span', { class: 'muted' }, x.detail), x.fix ? h('div', { class: 'muted' }, 'Naprawa: ' + x.fix) : null)))),
     h('h2', {}, 'Ustawienia demona'),
-    h('p', { class: 'muted small' }, 'Zmiany są sprawdzane jako całość. Ustawienia wpływające na bezpieczeństwo zmienia się tylko w pliku /etc/cordial-hrd/hrdd.toml.'),
+    h('p', { class: 'muted small' }, 'Zmiany są sprawdzane jako całość. Ustawienia wpływające na bezpieczeństwo zmienia się tylko w pliku ' + (c ? c.file : '/etc/cordial-hrd/hrdd.toml') + '.'),
     ...sections,
     h('div', { class: 'row' }, btn('Zapisz zmiany', 'primary', async () => {
       const changes = [];
@@ -527,6 +938,9 @@ async function buildAdvanced(box, c) {
 
 async function route() {
   clearInterval(timer);
+  refreshHome = null;
+  document.onvisibilitychange = null;
+  closeMenu();
   if (!csrf) {
     try { const s = await raw('/api/session'); csrf = s.csrf; } catch (_) { showLogin(); return; }
   }

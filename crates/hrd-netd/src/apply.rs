@@ -1,9 +1,9 @@
-//! Executing a group's plan.
+//! Executing a proxy group's plan.
 //!
 //! One `match` over [`Step`] is the whole of what this helper can do to the
 //! system. There is no step that takes a path, an address, a command or a
 //! script from the requester; the values come from the stored configuration and
-//! from the group's name, which is validated to a lowercase slug.
+//! from the proxy group's name, which is validated to a lowercase slug.
 
 use std::fs::File;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -195,7 +195,7 @@ pub fn exec_step(
     }
 }
 
-/// Apply one group. On failure of a `Create`, what was made is removed again;
+/// Apply one proxy group. On failure of a `Create`, what was made is removed again;
 /// on failure of a `Reconfigure` the namespace is left as it is (the firewall
 /// is the first step, so it is at worst closed) and the recorded hash is
 /// cleared so the next plan shows the work still to do.
@@ -218,7 +218,7 @@ pub fn apply_group(env: &Env, gp: &GroupPlan, spec: &GroupSpec, net: &StoredNetw
             }
             let _ = env.store.save_manifest(&m);
             return Err(Error::unavailable(format!(
-                "group {}: {}: {e}",
+                "proxy group {}: {}: {e}",
                 spec.group,
                 step.describe("")
             )));

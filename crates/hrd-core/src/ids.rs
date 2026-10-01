@@ -140,8 +140,9 @@ name_type!(
 );
 
 name_type!(
-    /// A network definition (one tunnel). Also names the namespace file, so it
-    /// has the same shape as a group name.
+    /// A network definition, called a proxy in the panel and on the command line
+    /// (one tunnel). It has the same shape as a proxy group name, which is what
+    /// names the namespace file.
     NetworkName,
     "network",
     24,

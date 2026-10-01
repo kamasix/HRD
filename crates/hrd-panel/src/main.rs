@@ -101,10 +101,24 @@ impl Backend for Real {
         )
     }
 
+    fn helper_status(&self) -> Value {
+        match self.netd.call_value(NetdRequest::Ping) {
+            Ok(v) => serde_json::json!({
+                "helper": true,
+                "can_define": v.get("service_define").and_then(|b| b.as_bool()).unwrap_or(false),
+            }),
+            Err(e) => serde_json::json!({
+                "helper": false,
+                "can_define": false,
+                "error": e.to_string(),
+            }),
+        }
+    }
+
     fn add_network(&self, s: NetworkSpec) -> Result<Value> {
         let parsed = hrd_net::wg::parse(&s.config)?;
         if parsed.dns.is_empty() && s.dns.is_empty() {
-            return Err(Error::invalid("the file has no DNS line and none was given: clients in this group can only reach the tunnel, so they need a resolver behind it"));
+            return Err(Error::invalid("the file has no DNS line and none was given: clients behind this proxy can only reach the tunnel, so they need a resolver behind it"));
         }
         let summary: NetworkSummary = self.netd.call(NetdRequest::PutNetwork {
             name: s.name.clone(),

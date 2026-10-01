@@ -7,7 +7,7 @@
 //! | what | where | who can touch it |
 //! |---|---|---|
 //! | global configuration | `/etc/cordial-hrd` | root writes, service reads |
-//! | registry (accounts, groups, network metadata) | `/var/lib/cordial-hrd/registry.json` | service user |
+//! | registry (accounts, groups, proxy groups, network metadata) | `/var/lib/cordial-hrd/registry.json` | service user |
 //! | per-account private data (profiles, client storage) | `/var/lib/cordial-hrd/acct/<account>` | service user, `0700` |
 //! | runtime (the unpacked Roblox build, shared, read-only to clients) | `/var/lib/cordial-hrd/runtime` | service user writes at import only |
 //! | secrets | the Secret Service keyring under `/var/lib/cordial-hrd/secrets`; WireGuard keys under the helper's own root-only directory | see docs/security.md |
@@ -174,7 +174,7 @@ impl Layout {
     /// The private session bus the Secret Service lives on, and its runtime
     /// directory. A filesystem socket, not an abstract one: abstract sockets
     /// belong to a network namespace and would be unreachable from inside a
-    /// group's.
+    /// proxy group's.
     pub fn secrets_run(&self) -> PathBuf {
         self.run_dir.join("secrets")
     }

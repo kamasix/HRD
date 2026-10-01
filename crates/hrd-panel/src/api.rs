@@ -2,9 +2,10 @@
 //! needs the CSRF header and a same-origin `Origin`.
 //!
 //! `/api/call` forwards one control-protocol request to the daemon and returns its
-//! answer: the panel adds no operation of its own beyond the three that need
-//! something the socket protocol cannot carry (importing a WireGuard file,
-//! uploading and importing an APK, fetching a screenshot as an image).
+//! answer: the panel adds no operation of its own beyond the few that need
+//! something the socket protocol cannot carry (defining a proxy from a WireGuard
+//! file, asking the network helper whether that is allowed, uploading and
+//! importing an APK, fetching a screenshot as an image).
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -27,7 +28,11 @@ pub trait Backend: Send + Sync {
         label: Option<String>,
         make_current: bool,
     ) -> Result<Value>;
+    /// Define a proxy: hand a WireGuard file to the network helper, which
+    /// refuses unless `allow_service_define` is on in its configuration.
     fn add_network(&self, spec: NetworkSpec) -> Result<Value>;
+    /// Is the network helper there, and may the panel define a proxy through it?
+    fn helper_status(&self) -> Value;
 }
 
 #[derive(serde::Deserialize)]
@@ -164,7 +169,11 @@ pub fn handle(ctx: &Ctx, req: &http::Request, stream: &mut dyn Read, remote: &st
             )
         }
         ("POST", "/api/call") => call(ctx, req, stream),
-        ("POST", "/api/network/add") => network_add(ctx, req, stream),
+        ("POST", "/api/proxy/add") => network_add(ctx, req, stream),
+        ("GET", "/api/proxy/status") => Response::json(
+            200,
+            &json!({ "ok": true, "data": ctx.backend.helper_status() }),
+        ),
         ("POST", "/api/runtime/import") => runtime_import(ctx, req, stream),
         ("PUT", "/api/upload/runtime") => upload(ctx, req, stream),
         ("GET", _) if p.starts_with("/api/shot/") => shot(ctx, &p["/api/shot/".len()..]),
@@ -268,7 +277,7 @@ fn network_add(ctx: &Ctx, req: &http::Request, stream: &mut dyn Read) -> Respons
         Ok(s) => s,
         Err(e) => return err(400, "invalid", &format!("not a network: {e}")),
     };
-    eprintln!("<6>panel: network add {}", spec.name);
+    eprintln!("<6>panel: proxy add {}", spec.name);
     match ctx.backend.add_network(spec) {
         Ok(d) => Response::json(200, &json!({ "ok": true, "data": d })),
         Err(e) => from_error(&e),
@@ -471,6 +480,9 @@ mod tests {
         fn add_network(&self, s: NetworkSpec) -> Result<Value> {
             Ok(json!({ "name": s.name }))
         }
+        fn helper_status(&self) -> Value {
+            json!({ "helper": true, "can_define": false })
+        }
     }
 
     fn ctx(token: &str) -> (Ctx, Arc<Mock>) {
@@ -621,6 +633,49 @@ mod tests {
         );
         assert_eq!(send(h(&csrf, "https://panel:1")), 200);
         assert_eq!(m.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_proxy_routes_need_a_session_and_defining_one_needs_the_csrf_header_too() {
+        let t = new_token();
+        let (c, _) = ctx(&t);
+        // no session: neither route is reachable
+        assert_eq!(
+            run(&c, &request("GET", "/api/proxy/status", &[], "")).status,
+            401
+        );
+        let add = "{\"name\":\"de-1\",\"config\":\"[Interface]\"}";
+        let post =
+            |hs: &[(&str, &str)]| run(&c, &request("POST", "/api/proxy/add", hs, add)).status;
+        assert_eq!(post(&[("Content-Type", "application/json")]), 401);
+
+        let (cookie, csrf) = login_ok(&c, &t);
+        let session = [("Cookie", cookie.as_str())];
+        let r = run(&c, &request("GET", "/api/proxy/status", &session, ""));
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["data"]["can_define"], false);
+        // with a session but without the CSRF header or a same-origin Origin
+        let json_ct = ("Content-Type", "application/json");
+        assert_eq!(post(&[session[0], json_ct]), 403);
+        assert_eq!(
+            post(&[
+                session[0],
+                json_ct,
+                ("X-CSRF", &csrf),
+                ("Origin", "https://evil.example")
+            ]),
+            403
+        );
+        assert_eq!(
+            post(&[
+                session[0],
+                json_ct,
+                ("X-CSRF", &csrf),
+                ("Origin", "https://panel:1")
+            ]),
+            200
+        );
     }
 
     #[test]

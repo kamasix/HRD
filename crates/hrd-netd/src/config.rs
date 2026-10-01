@@ -11,10 +11,10 @@ use serde::Deserialize;
 pub struct NetdConfig {
     /// The unprivileged user whose manager may talk to this helper. Its uid is
     /// the only one (besides root) accepted on the socket, and the socket is
-    /// given to its group.
+    /// given to its group (the Unix group, not a proxy group).
     pub service_user: String,
     pub service_group: String,
-    /// Re-apply the groups recorded by the last `apply` when the helper starts
+    /// Re-apply the proxy groups recorded by the last `apply` when the helper starts
     /// (after a reboot, `/run` is empty). **Off by default**: a package must not
     /// change the network on its own; the operator turns this on deliberately.
     pub apply_on_start: bool,
@@ -73,6 +73,19 @@ pub fn lookup_group(group_text: &str, name: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_service_user_may_not_define_a_tunnel_unless_the_file_says_so() {
+        assert!(!NetdConfig::default().allow_service_define);
+        let c: NetdConfig = toml::from_str("allow_service_define = true\n").unwrap();
+        assert!(c.allow_service_define);
+        // the shipped example is valid and leaves it off
+        let ex: NetdConfig =
+            toml::from_str(include_str!("../../../config/netd.toml.example")).unwrap();
+        assert!(!ex.allow_service_define);
+        // a typo is an error, not a silent default
+        assert!(toml::from_str::<NetdConfig>("allow_service_defin = true\n").is_err());
+    }
 
     #[test]
     fn users_and_groups_are_looked_up_by_exact_name() {

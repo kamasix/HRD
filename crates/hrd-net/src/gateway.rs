@@ -1,12 +1,12 @@
 //! The other end of the tunnels: what the VPS has to be told.
 //!
-//! Nothing here touches a machine. [`plan`] turns the groups and their exit
+//! Nothing here touches a machine. [`plan`] turns the proxy groups and their exit
 //! addresses into a set of files and instructions that the operator reads,
 //! copies to the gateway and applies themselves. The brief says no deployment
 //! without a separate command, and a gateway that is also the only way to reach
 //! the server is the last place to apply something unread.
 //!
-//! The mapping is explicit. Each group's tunnel address is mapped to one public
+//! The mapping is explicit. Each proxy group's tunnel address is mapped to one public
 //! address of the gateway, by name, in one place; traffic from any tunnel
 //! address that is *not* in the map is dropped rather than translated to a
 //! default. The gateway cannot create public addresses: each must already be
@@ -27,7 +27,7 @@ pub struct GatewayPeer {
     /// The tunnel address(es) the client uses; the gateway routes only these
     /// back to it.
     pub client_addresses: Vec<IpNet>,
-    /// The public address of the gateway this group's traffic should leave
+    /// The public address of the gateway this proxy group's traffic should leave
     /// from, as configured by the operator.
     pub exit: IpAddr,
     /// The imported file carried a preshared key; the operator must put the
@@ -99,27 +99,27 @@ fn check(input: &GatewayInput) -> Result<()> {
         return Err(Error::invalid("listen port must not be 0"));
     }
     if input.peers.is_empty() {
-        return Err(Error::invalid("no groups with a configured exit address: set one with `hrdctl network set NAME --exit-ip ADDRESS`"));
+        return Err(Error::invalid("no proxy groups with a configured exit address: set one with `hrdctl proxy set NAME --exit-ip ADDRESS`"));
     }
     let mut seen_addr: Vec<IpNet> = Vec::new();
     for p in &input.peers {
         if p.client_addresses.is_empty() {
             return Err(Error::invalid(format!(
-                "group {} has no tunnel address",
+                "proxy group {} has no tunnel address",
                 p.group
             )));
         }
         for a in &p.client_addresses {
             if seen_addr.contains(a) {
                 return Err(Error::invalid(format!(
-                    "tunnel address {a} is used by two groups; each client needs its own"
+                    "tunnel address {a} is used by two proxy groups; each client needs its own"
                 )));
             }
             seen_addr.push(*a);
         }
         if p.exit.is_loopback() || p.exit.is_unspecified() || p.exit.is_multicast() {
             return Err(Error::invalid(format!(
-                "group {}: exit address {} cannot be a public address",
+                "proxy group {}: exit address {} cannot be a public address",
                 p.group, p.exit
             )));
         }
@@ -155,7 +155,7 @@ pub fn plan(input: &GatewayInput) -> Result<GatewayPlan> {
     wg.push_str("PrivateKey = <PASTE THE GATEWAY PRIVATE KEY HERE>\n");
     for p in &input.peers {
         wg.push_str(&format!(
-            "\n# group {}  ->  exit {}\n[Peer]\n",
+            "\n# proxy group {}  ->  exit {}\n[Peer]\n",
             p.group, p.exit
         ));
         wg.push_str(&format!("PublicKey = {}\n", p.client_public_key));
@@ -254,7 +254,7 @@ pub fn plan(input: &GatewayInput) -> Result<GatewayPlan> {
     // ---- instructions -------------------------------------------------
     let mut readme = String::new();
     readme.push_str("Gateway plan. Nothing has been applied to any machine.\n\n");
-    readme.push_str("Mapping (group -> tunnel address -> public exit):\n");
+    readme.push_str("Mapping (proxy group -> tunnel address -> public exit):\n");
     for p in &input.peers {
         let addrs: Vec<String> = p.client_addresses.iter().map(|a| a.to_string()).collect();
         readme.push_str(&format!(
@@ -308,7 +308,7 @@ pub fn plan(input: &GatewayInput) -> Result<GatewayPlan> {
         .iter()
         .any(|p| p.client_addresses.iter().any(|a| a.is_v6()))
     {
-        out.warnings.push("a group has an IPv6 tunnel address; this plan does not translate IPv6. Keep the group's IPv6 policy on `block` unless the gateway routes a prefix to it.".into());
+        out.warnings.push("a proxy group has an IPv6 tunnel address; this plan does not translate IPv6. Keep the proxy group's IPv6 policy on `block` unless the gateway routes a prefix to it.".into());
     }
     if let Some(pf) = &input.panel {
         out.warnings.push(format!(
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn every_group_is_mapped_to_its_own_exit_by_name() {
+    fn every_proxy_group_is_mapped_to_its_own_exit_by_name() {
         let p = plan(&input()).unwrap();
         let nft = &p
             .files
@@ -396,7 +396,10 @@ mod tests {
     fn duplicate_tunnel_addresses_are_refused() {
         let mut i = input();
         i.peers[1] = peer("g02", "10.66.1.2/32", "203.0.113.12");
-        assert!(plan(&i).unwrap_err().to_string().contains("two groups"));
+        assert!(plan(&i)
+            .unwrap_err()
+            .to_string()
+            .contains("two proxy groups"));
     }
 
     #[test]

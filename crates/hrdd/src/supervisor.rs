@@ -301,7 +301,7 @@ pub fn run(d: Arc<Daemon>) {
     }
 }
 
-/// Keep the cached view of each group's network fresh, off the supervisor's
+/// Keep the cached view of each proxy group's network fresh, off the supervisor's
 /// thread: a helper that hangs must never delay reading a client's log.
 pub fn spawn_net_refresh(d: Arc<Daemon>) {
     std::thread::Builder::new()

@@ -17,7 +17,7 @@ use crate::{nsops, probe, status};
 pub struct Shared {
     pub env: Env,
     /// Serialises every request that changes anything. Planning, applying and
-    /// tearing down the same group concurrently would race on the same
+    /// tearing down the same proxy group concurrently would race on the same
     /// namespace.
     pub write_lock: Mutex<()>,
     pub allowed_uids: Vec<u32>,
@@ -134,11 +134,14 @@ fn check_specs(specs: &[GroupSpec]) -> Result<()> {
     for (i, a) in specs.iter().enumerate() {
         for b in &specs[i + 1..] {
             if a.group == b.group {
-                return Err(Error::invalid(format!("group {} is listed twice", a.group)));
+                return Err(Error::invalid(format!(
+                    "proxy group {} is listed twice",
+                    a.group
+                )));
             }
             if a.network == b.network {
                 return Err(Error::invalid(format!(
-                    "network {} is used by both {} and {}. Two interfaces with one key fight over the gateway's endpoint for that key; a network belongs to one group",
+                    "proxy {} is used by both {} and {}. Two interfaces with one key fight over the gateway's endpoint for that key; a proxy belongs to one proxy group",
                     a.network, a.group, b.group
                 )));
             }
@@ -177,12 +180,19 @@ pub fn dispatch_public(shared: &Shared, req: NetdRequest) -> Result<serde_json::
     dispatch(shared, req)
 }
 
+/// Who may hand the helper a tunnel: root always, the service user only when the
+/// administrator allowed it in `netd.toml`.
+fn may_define(uid: u32, service_may_define: bool) -> bool {
+    uid == 0 || service_may_define
+}
+
 /// A request from a peer. Defining a tunnel (an endpoint and a key that every
 /// client behind it will be routed through) is the administrator's decision,
 /// so it needs root unless `allow_service_define` in `netd.toml` hands it to the
 /// service user; the service user may always plan, apply and remove.
 fn dispatch_as(shared: &Shared, uid: u32, req: NetdRequest) -> Result<serde_json::Value> {
-    if matches!(req, NetdRequest::PutNetwork { .. }) && uid != 0 && !shared.service_may_define {
+    if matches!(req, NetdRequest::PutNetwork { .. }) && !may_define(uid, shared.service_may_define)
+    {
         return Err(Error::Denied(
             "defining a proxy needs root: run `sudo hrdctl proxy add ...`, or set allow_service_define = true in /etc/cordial-hrd/netd.toml and restart hrd-netd so that the panel may do it (then whoever can sign in to the panel decides where traffic is routed)".into(),
         ));
@@ -213,7 +223,7 @@ fn dispatch(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
                 .find(|(_, a)| a.network == name)
             {
                 return Err(Error::conflict(format!(
-                    "network {name} is applied to group {g}; tear that group down first"
+                    "proxy {name} is applied to proxy group {g}; tear that proxy group down first"
                 )));
             }
             env.store.delete(&name)?;
@@ -227,7 +237,7 @@ fn dispatch(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
             let mut text = Vec::new();
             for gp in &p.groups {
                 text.push(format!(
-                    "group {}: {:?} ({})",
+                    "proxy group {}: {:?} ({})",
                     gp.group, gp.action, gp.reason
                 ));
                 for s in &gp.steps {
@@ -274,7 +284,7 @@ fn dispatch(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
                         else {
                             out.push(outcome(
                                 false,
-                                "internal: no resolved network for the group".into(),
+                                "internal: no resolved proxy for the proxy group".into(),
                             ));
                             continue;
                         };
@@ -295,7 +305,7 @@ fn dispatch(shared: &Shared, req: NetdRequest) -> Result<serde_json::Value> {
             let _g = shared.write_lock.lock().unwrap_or_else(|e| e.into_inner());
             if !allow_disruptive {
                 return Err(Error::conflict(
-                    "tearing a group down interrupts its clients; pass allow_disruptive",
+                    "tearing a proxy group down interrupts its clients; pass allow_disruptive",
                 ));
             }
             apply::remove_group(env, &group)?;
@@ -322,5 +332,20 @@ mod erased {
             serde_json::to_value(self)
                 .map_err(|e| hrd_core::Error::Internal(format!("serialise a reply: {e}")))
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::may_define;
+
+    #[test]
+    fn defining_a_tunnel_is_root_only_unless_the_administrator_says_otherwise() {
+        // out of the box: the service user, and so the panel, may not
+        assert!(may_define(0, false));
+        assert!(!may_define(998, false));
+        // allow_service_define = true in netd.toml
+        assert!(may_define(998, true));
+        assert!(may_define(0, true));
     }
 }

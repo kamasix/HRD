@@ -4,7 +4,7 @@
 //! defaults say which. Nothing in this file is a claim about what Roblox, the
 //! kernel or the hardware will tolerate: `max_instances` is the manager's own
 //! design target, `assumed_start_peak_mib` is a first guess to be replaced by
-//! what `hrdctl stats` shows on the real machine, and a group's capacity
+//! what `hrdctl stats` shows on the real machine, and a proxy group's capacity
 //! is an organisational limit.
 //!
 //! Unknown keys are an error. A typo in a limit that silently falls back to a
@@ -252,7 +252,7 @@ pub struct EngineCfg {
     /// Path of the `cordial-run` built from the patched upstream tree.
     pub cordial_run: String,
     /// Path of the per-instance launcher that becomes `cordial-run` (or `cage`)
-    /// after entering the group's namespace.
+    /// after entering the proxy group's namespace.
     pub enter: String,
     /// Path of `hrd-import`, which the daemon runs (as the service user,
     /// with the operator's files passed as descriptors) to install a runtime.
@@ -363,8 +363,8 @@ impl Default for RuntimeCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct NetworkCfg {
-    /// Permit groups with no network. Off: an account whose group has no
-    /// tunnel is refused, because "no tunnel" must never quietly mean "the
+    /// Permit proxy groups with no proxy. Off: an account whose proxy group has
+    /// no tunnel is refused, because "no tunnel" must never quietly mean "the
     /// server's own address".
     pub allow_unrouted: bool,
     /// How old a WireGuard handshake may be before the network is reported

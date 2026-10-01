@@ -27,7 +27,7 @@ impl NetdClient {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         NetdClient {
             path: path.into(),
-            // Applying a group runs several commands and resolves an endpoint;
+            // Applying a proxy group runs several commands and resolves an endpoint;
             // a minute covers a slow resolver without hiding a hung helper.
             timeout: Duration::from_secs(60),
         }

@@ -12,7 +12,7 @@
 //!   After a reboot the keyring is locked until the operator unlocks it; that is
 //!   the price of the key not lying next to the store.
 //! * The bus is a filesystem socket (an abstract one belongs to a network
-//!   namespace and would be unreachable from inside a group's).
+//!   namespace and would be unreachable from inside a proxy group's).
 //! * The manager never reads a secret. It asks the service whether an item
 //!   exists and asks it to delete one, through `busctl`, which prints object
 //!   paths and never values.

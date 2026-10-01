@@ -200,7 +200,7 @@ pub fn parse(text: &str) -> Result<WgConfig> {
                 "peer" => {
                     n_peer += 1;
                     if n_peer > 1 {
-                        return Err(bad(n, "a second [Peer] section: a network group leaves through exactly one exit, so the file must have exactly one [Peer]"));
+                        return Err(bad(n, "a second [Peer] section: a proxy group leaves through exactly one exit, so the file must have exactly one [Peer]"));
                     }
                     Section::Peer
                 }
@@ -328,7 +328,7 @@ pub fn parse(text: &str) -> Result<WgConfig> {
     }
     if n_peer != 1 {
         return Err(Error::invalid(format!(
-            "WireGuard file must have exactly one [Peer] section, found {n_peer}: a network group leaves through one exit"
+            "WireGuard file must have exactly one [Peer] section, found {n_peer}: a proxy group leaves through one exit"
         )));
     }
     let (_, private_key) =
@@ -346,7 +346,7 @@ pub fn parse(text: &str) -> Result<WgConfig> {
 
     if !allowed.iter().any(IpNet::is_default_v4) {
         return Err(Error::invalid(
-            "AllowedIPs must contain 0.0.0.0/0: a group's clients have no other interface, so anything the tunnel does not route has no path at all",
+            "AllowedIPs must contain 0.0.0.0/0: a proxy group's clients have no other interface, so anything the tunnel does not route has no path at all",
         ));
     }
     if !addresses.iter().any(|a| a.addr.is_ipv4()) {
@@ -371,7 +371,7 @@ pub fn parse(text: &str) -> Result<WgConfig> {
 
 impl WgConfig {
     /// Whether the tunnel can carry IPv6: an IPv6 interface address and a
-    /// `::/0` route. The group's policy blocks IPv6 otherwise.
+    /// `::/0` route. The proxy group's policy blocks IPv6 otherwise.
     pub fn carries_ipv6(&self) -> bool {
         self.addresses.iter().any(IpNet::is_v6)
             && self.peer.allowed_ips.iter().any(IpNet::is_default_v6)

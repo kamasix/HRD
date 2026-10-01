@@ -120,7 +120,7 @@ impl State {
         )
     }
 
-    /// States that occupy a slot: counted against the group capacity check at
+    /// States that occupy a slot: counted against the proxy group capacity check at
     /// start and shown as "live" in summaries.
     pub fn is_live(self) -> bool {
         matches!(self, State::Queued) || self.expects_processes()
@@ -182,7 +182,7 @@ impl std::str::FromStr for ResourceMode {
 }
 
 // ---------------------------------------------------------------------------
-// Accounts, groups, networks
+// Accounts, groups, proxy groups, networks
 // ---------------------------------------------------------------------------
 
 /// What is known about whether an account can sign in. **Never** a claim that
@@ -280,7 +280,7 @@ pub enum NetBackend {
     WireguardNetns,
 }
 
-/// How IPv6 is treated inside a group's namespace.
+/// How IPv6 is treated inside a proxy group's namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Ipv6Policy {
@@ -292,12 +292,12 @@ pub enum Ipv6Policy {
     Block,
 }
 
-/// Where the operator expects a group's traffic to appear from. The two halves
+/// Where the operator expects a proxy group's traffic to appear from. The two halves
 /// are kept apart on purpose.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExitInfo {
     /// What the operator configured, for example the public address the gateway
-    /// maps this group to. Nothing verifies it.
+    /// maps this proxy group to. Nothing verifies it.
     #[serde(default)]
     pub configured: Option<IpAddr>,
     /// What a probe actually saw. Filled only by `network check`.
@@ -348,13 +348,13 @@ pub struct Network {
     /// contact a third party the operator did not name.
     #[serde(default)]
     pub stun_server: Option<String>,
-    /// Upper bound on clients across all groups using this network.
+    /// Upper bound on live clients behind this network (it carries one proxy group).
     #[serde(default)]
     pub max_clients: Option<u32>,
     pub created_at: u64,
 }
 
-/// Whether a network can carry a group's traffic right now.
+/// Whether a network can carry a proxy group's traffic right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Readiness {

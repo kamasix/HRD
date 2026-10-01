@@ -92,7 +92,7 @@ pub fn status_of(d: &Daemon, groups: Vec<ProxyGroupName>) -> Result<Vec<GroupSta
         .call(NetdRequest::Status { groups })
 }
 
-/// Ask the helper about every group and cache the answer. Never called with the
+/// Ask the helper about every proxy group and cache the answer. Never called with the
 /// state lock held.
 pub fn refresh(d: &Daemon) {
     let groups: Vec<ProxyGroupName> = d.lock().reg.proxy_groups.keys().cloned().collect();

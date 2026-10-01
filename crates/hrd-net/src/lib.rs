@@ -1,4 +1,5 @@
-//! Network groups: what a WireGuard file may contain, what applying it means,
+//! Proxy groups: what a WireGuard file may contain, what applying it means,
+//! (here a *group* is a proxy group: the unit that owns a namespace and a tunnel)
 //! and what the gateway on the other end must be told.
 //!
 //! This crate executes nothing (the small client in `client` only asks the

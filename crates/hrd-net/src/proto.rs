@@ -2,10 +2,10 @@
 //!
 //! Same framing as the control protocol (one JSON object per line). The
 //! helper is root; the manager is not. **The manager can only name things**:
-//! a group, a network, an IPv6 policy. It cannot give the helper an address, a
+//! a proxy group, a network, an IPv6 policy. It cannot give the helper an address, a
 //! command, a path or a route. Everything that becomes a system change is
 //! derived inside the helper from the configuration it stored itself, so a
-//! compromised manager can ask for a group to be applied or removed and cannot
+//! compromised manager can ask for a proxy group to be applied or removed and cannot
 //! make the helper do anything else.
 
 use std::net::IpAddr;
@@ -58,7 +58,7 @@ pub enum NetdRequest {
     Status {
         groups: Vec<ProxyGroupName>,
     },
-    /// Send one UDP question from inside the group's namespace and report the
+    /// Send one UDP question from inside the proxy group's namespace and report the
     /// address the far end saw.
     ProbeStun {
         group: ProxyGroupName,

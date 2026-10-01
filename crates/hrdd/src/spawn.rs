@@ -715,7 +715,7 @@ mod tests {
     }
 
     /// Runs a real child through `launch` with an environment of our choosing:
-    /// checks the log redirection, the cleared environment and the new group.
+    /// checks the log redirection, the cleared environment and the new process group.
     #[test]
     fn launch_clears_the_environment_and_writes_the_log() {
         let d = std::env::temp_dir().join(format!("hrd-spawn-{}", std::process::id()));

@@ -1,4 +1,4 @@
-//! The STUN probe, run from inside a group's namespace.
+//! The STUN probe, run from inside a proxy group's namespace.
 
 use std::io::Read;
 use std::net::{IpAddr, ToSocketAddrs, UdpSocket};
@@ -76,7 +76,7 @@ pub fn stun_probe(env: &Env, group: &ProxyGroupName, server: &str) -> Result<Stu
                 }
             }
         }
-        Err(Error::unavailable(format!("no STUN reply from {dest} in 3 attempts: UDP does not get out through this group's tunnel, or the server is unreachable")))
+        Err(Error::unavailable(format!("no STUN reply from {dest} in 3 attempts: UDP does not get out through this proxy group's tunnel, or the server is unreachable")))
     })??;
     Ok(StunResult {
         address: result.0,
