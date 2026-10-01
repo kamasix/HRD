@@ -94,3 +94,22 @@ sudo apt purge cordial-hrd           # deletes them, including stored sessions a
 Removal releases this project's network namespaces (and with them the tunnels and
 firewall tables inside) and touches nothing else. To undo the gateway, follow the
 `README-gateway.txt` that `gateway plan` wrote.
+
+## Example: a 4-core, 16 GB machine with an Intel iGPU (i5-6400T)
+
+Not measured; a starting point. Put it in `/etc/cordial-hrd/cordiald.toml` and
+raise the numbers only after watching `cordialctl stats`:
+
+```toml
+[scheduler]
+max_instances = 6           # RAM, not the manager, is the limit: ~1 GB per engine
+max_concurrent_starts = 1   # starts are the expensive moment
+min_available_mem_mib = 2048
+
+[engine]
+graphics = "auto"           # uses /dev/dri/renderD128 (the cordial user is in `render`); falls back to the CPU
+software_threads = 1        # only matters if it falls back to lavapipe
+cpus_per_instance = 1
+```
+
+`scripts/bootstrap-debian.sh` automates building and installing on Debian 13.

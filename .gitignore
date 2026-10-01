@@ -11,3 +11,4 @@ libroblox.so
 *.key
 *.keyring
 /dist/
+bootstrap.log
