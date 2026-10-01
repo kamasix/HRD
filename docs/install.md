@@ -32,6 +32,16 @@ sessions, networks and settings stay where they are. What changes:
 * the old package's removal tears down the applied network namespaces; run
   `hrdctl network apply` again.
 
+**Do not purge `cordial-hrd`.** Removing it (which `apt` does for you) leaves it in
+dpkg's "rc" state, and its purge script deletes `/var/lib/cordial-hrd`,
+`/etc/cordial-hrd` and the rest, which `hrd` keeps using: the registry, every
+profile, the encrypted keyring, the WireGuard keys. `apt purge cordial-hrd`, and
+clean-ups of residual packages such as `apt purge '~c'` or
+`dpkg --purge $(dpkg -l | awk '/^rc/ {print $2}')`, would run it. Leave it as it
+is (it is a few kilobytes of metadata), or purge it only after you have saved
+`/var/lib/cordial-hrd` and `/etc/cordial-hrd` somewhere else. The `hrd` installer
+prints a warning when it finds the old package in that state.
+
 ## 1. Packages
 
 The manager package and the client package are separate because the client needs
