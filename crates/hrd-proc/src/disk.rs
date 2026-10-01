@@ -1,6 +1,6 @@
 //! Disk usage of a directory tree, bounded.
 //!
-//! `cordialctl stats` reports how much disk the caches and the runtime store
+//! `hrdctl stats` reports how much disk the caches and the runtime store
 //! take. Walking 300 accounts' trees on every call would be its own cost, so
 //! the walk is capped by entry count and says when it stopped early.
 

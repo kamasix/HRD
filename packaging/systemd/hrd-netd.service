@@ -1,0 +1,36 @@
+[Unit]
+Description=HRD network helper (namespaces, WireGuard, firewall for proxy groups)
+Documentation=file:///usr/share/doc/hrd/gateway.md
+After=network.target
+Before=hrdd.service
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/hrd/hrd-netd
+# Applying a group's network is an explicit operator command (`hrdctl network
+# apply`); nothing is applied when this service starts unless netd.toml says so.
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+# Root, but with only what the job needs: netlink (interfaces, routes, nftables)
+# and namespaces/mounts (keeping a group's namespace alive as a bind mount), and
+# chown of its own socket to the service group.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_CHOWN
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=net mnt
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+# NOT set on purpose: ProtectSystem, ProtectHome, PrivateTmp, ProtectKernelModules,
+# ProtectControlGroups and every other option that gives a service a private mount
+# namespace. This service bind-mounts network namespaces under
+# /run/cordial-hrd-netns, and a mount made inside a private mount namespace is
+# invisible to the clients, which would then find no namespace to enter.
+
+[Install]
+WantedBy=multi-user.target

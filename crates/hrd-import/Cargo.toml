@@ -11,7 +11,7 @@ publish.workspace = true
 workspace = true
 
 [[bin]]
-name = "cordial-import"
+name = "hrd-import"
 path = "src/main.rs"
 
 [dependencies]

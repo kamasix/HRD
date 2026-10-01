@@ -10,7 +10,7 @@ gateway's endpoint for that key.
 
 Each group gets its own Linux **network namespace**. The namespace contains the
 loopback interface and one WireGuard interface, `wg0`, nothing else. A client
-starts inside it (`cordial-enter`). Everything the client or any process it
+starts inside it (`hrd-enter`). Everything the client or any process it
 starts does (initialisation, sign-in, HTTPS, the game's UDP, DNS, helpers) goes
 out through `wg0` or goes nowhere, because there is no other interface. This is
 a property of the namespace, not of a proxy setting.
@@ -22,8 +22,8 @@ Fail-closed, concretely:
   `wg0`; if the tunnel is down, packets are dropped and the client has no
   connectivity. Nothing falls back to the server's own link;
 * a group with no tunnel is refused at start (`network.allow_unrouted = false`);
-* `cordial-enter` will not run a client if the namespace handle is missing or not
-  root-owned, and `cordial-enter check` (also wired to upstream's per-profile
+* `hrd-enter` will not run a client if the namespace handle is missing or not
+  root-owned, and `hrd-enter check` (also wired to upstream's per-profile
   `network.json` gate) verifies from inside the client that the only interfaces
   are `lo` and `wg0`;
 * DNS: the namespace's `resolv.conf` and `nsswitch.conf` are generated and
@@ -43,7 +43,7 @@ ASSOCIATE is not implemented.
 
 ## The privileged helper
 
-`cordial-netd` is root with `CAP_NET_ADMIN`, `CAP_SYS_ADMIN` and `CAP_CHOWN` and
+`hrd-netd` is root with `CAP_NET_ADMIN`, `CAP_SYS_ADMIN` and `CAP_CHOWN` and
 `no_new_privs`. It holds the WireGuard private keys in `/var/lib/cordial-hrd-netd`
 (root, `0700`/`0600`); the keys never pass through the daemon or appear in any
 registry file, argument or log. The manager can ask it only to store a network
@@ -66,13 +66,13 @@ removal is idempotent.
 ## Commands
 
 ```
-sudo cordialctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11 [--stun-server HOST:PORT]
-cordialctl group create g01 --network de-1 --capacity 20
-cordialctl group assign g01 --accounts g01.txt
-cordialctl network plan        # what apply would do; changes nothing
-cordialctl network apply       # does it, for groups with no live client
-cordialctl network check de-1  # observed exit, see below
-cordialctl network list
+sudo hrdctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11 [--stun-server HOST:PORT]
+hrdctl group create g01 --network de-1 --capacity 20
+hrdctl group assign g01 --accounts g01.txt
+hrdctl network plan        # what apply would do; changes nothing
+hrdctl network apply       # does it, for groups with no live client
+hrdctl network check de-1  # observed exit, see below
+hrdctl network list
 ```
 
 `network apply` never rebuilds a group that has live clients (a rebuild would cut

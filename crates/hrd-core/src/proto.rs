@@ -1,4 +1,4 @@
-//! The control protocol between `cordialctl` and `cordiald`.
+//! The control protocol between `hrdctl` and `hrdd`.
 //!
 //! Newline-delimited JSON over a Unix stream socket: one request per line,
 //! answered by one response line, except for the two streaming requests
@@ -307,7 +307,7 @@ pub struct ConfigChange {
     pub value: Option<serde_json::Value>,
 }
 
-/// The Roblox build updater, as the panel and `cordialctl runtime update` show it.
+/// The Roblox build updater, as the panel and `hrdctl runtime update` show it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateView {
     pub enabled: bool,
@@ -531,7 +531,7 @@ pub struct ConfigApplied {
     pub live: Vec<String>,
     /// Keys that take effect on the next start of an instance.
     pub next_start: Vec<String>,
-    /// Keys that need `systemctl restart cordiald`.
+    /// Keys that need `systemctl restart hrdd`.
     pub restart: Vec<String>,
 }
 

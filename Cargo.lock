@@ -324,40 +324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cordial-enter"
-version = "0.1.0"
-dependencies = [
- "rustix 1.1.5",
-]
-
-[[package]]
-name = "cordial-netd"
-version = "0.1.0"
-dependencies = [
- "hrd-core",
- "hrd-net",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "sha2",
- "toml",
-]
-
-[[package]]
-name = "cordial-panel"
-version = "0.1.0"
-dependencies = [
- "hrd-core",
- "hrd-net",
- "rcgen",
- "rustix 1.1.5",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "cordial-update"
 version = "0.23.0"
 dependencies = [
@@ -371,38 +337,6 @@ dependencies = [
  "ureq",
  "zbus",
  "zip",
-]
-
-[[package]]
-name = "cordialctl"
-version = "0.1.0"
-dependencies = [
- "clap",
- "crossterm",
- "hrd-core",
- "hrd-net",
- "hrd-proc",
- "png",
- "ratatui",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "cordiald"
-version = "0.1.0"
-dependencies = [
- "hrd-core",
- "hrd-net",
- "hrd-proc",
- "libc",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "signal-hook",
- "toml",
 ]
 
 [[package]]
@@ -796,6 +730,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrd-enter"
+version = "0.1.0"
+dependencies = [
+ "rustix 1.1.5",
+]
+
+[[package]]
 name = "hrd-import"
 version = "0.1.0"
 dependencies = [
@@ -822,11 +763,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrd-netd"
+version = "0.1.0"
+dependencies = [
+ "hrd-core",
+ "hrd-net",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+]
+
+[[package]]
+name = "hrd-panel"
+version = "0.1.0"
+dependencies = [
+ "hrd-core",
+ "hrd-net",
+ "rcgen",
+ "rustix 1.1.5",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "hrd-proc"
 version = "0.1.0"
 dependencies = [
  "hrd-core",
  "rustix 1.1.5",
+]
+
+[[package]]
+name = "hrdctl"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crossterm",
+ "hrd-core",
+ "hrd-net",
+ "hrd-proc",
+ "png",
+ "ratatui",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "hrdd"
+version = "0.1.0"
+dependencies = [
+ "hrd-core",
+ "hrd-net",
+ "hrd-proc",
+ "libc",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "signal-hook",
+ "toml",
 ]
 
 [[package]]

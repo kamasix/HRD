@@ -1,6 +1,6 @@
 # What the numbers mean
 
-`cordialctl stats` and `status` show measurements from `/proc` and cgroup v2.
+`hrdctl stats` and `status` show measurements from `/proc` and cgroup v2.
 A value that could not be read is shown as `-` or `not measured`, never as 0.
 
 | figure | source | notes |
@@ -19,7 +19,7 @@ A value that could not be read is shown as `-` or `not measured`, never as 0.
 | KSM | `/sys/kernel/mm/ksm/*` when KSM is on | |
 
 Classes: **engine** = `cordial-run`; **compositor** = `cage`; **manager** =
-`cordiald`; **helpers** = everything else in an instance's process set (plugin
+`hrdd`; **helpers** = everything else in an instance's process set (plugin
 runtime, web process, sandbox, anything the client started).
 `cordial-run` contains the open layer and the closed engine in one process, and
 they cannot be told apart from outside.

@@ -1,0 +1,21 @@
+[package]
+name = "hrdd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hrd-core = { path = "../hrd-core" }
+hrd-proc = { path = "../hrd-proc" }
+hrd-net = { path = "../hrd-net" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "net", "event", "time", "thread", "std"] }
+libc.workspace = true
+signal-hook = { version = "0.3", default-features = false }

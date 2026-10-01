@@ -1,0 +1,16 @@
+[package]
+name = "hrd-enter"
+description = "Enter a network group's namespace, drop every privilege, exec. The only file-capability binary in the package."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# No dependency on hrd-core on purpose: this is the one program that gains a
+# capability from its file, and it should be small enough to read in one sitting.
+[dependencies]
+rustix = { workspace = true, features = ["fs", "mount", "thread", "process", "std"] }

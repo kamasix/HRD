@@ -1,0 +1,20 @@
+[package]
+name = "hrd-panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hrd-core = { path = "../hrd-core" }
+hrd-net = { path = "../hrd-net" }
+serde.workspace = true
+serde_json.workspace = true
+rustix = { workspace = true, features = ["fs", "net", "rand", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+sha2 = "0.10"

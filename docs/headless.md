@@ -1,6 +1,6 @@
 # Headless operation and what the client still needs
 
-The manager (`cordiald`, `cordialctl`, the helpers) needs no graphics library at
+The manager (`hrdd`, `hrdctl`, the helpers) needs no graphics library at
 all: they link the C library and `libgcc_s` and nothing else (checked with `ldd`; the
 binaries are plain Rust). The client is a different matter.
 

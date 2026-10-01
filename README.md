@@ -1,10 +1,10 @@
-# Cordial fleet manager (HRD)
+# HRD
 
-A terminal-only manager that runs many independent [Cordial](https://github.com/luohoa97/cordial)
-clients on a Debian server, each with its own profile, process set and network
-exit, for your own accounts in your own experiences. Cordial runs Roblox's
-official Android build natively on Linux; this project does not touch the
-engine, it manages the processes around it.
+HRD runs many independent [Cordial](https://github.com/luohoa97/cordial) clients
+on a Debian server, from the terminal or a small web panel, each with its own
+profile, process set and network exit, for your own accounts in your own
+experiences. Cordial runs Roblox's official Android build natively on Linux; HRD
+does not touch the engine, it manages the processes around it.
 
 **Read [docs/status.md](docs/status.md) first.** It says what is implemented, what
 was only compiled, and what could not be verified because no Roblox client,
@@ -17,12 +17,12 @@ clients run anywhere; 300 is the manager's design target.
 
 | | |
 |---|---|
-| `cordiald` | the one daemon: registry, start queue with memory- and pressure-aware admission, per-instance state machine, process sets in cgroups, stats, the secret store |
-| `cordialctl` | the command line (`--json` everywhere) and `cordialctl tui` |
-| `cordial-panel` | optional HTTPS web panel on a random port, login token |
-| `cordial-netd` | the only root component: per-group network namespaces + WireGuard + fail-closed firewall |
-| `cordial-enter` | static launcher with one file capability; enters a group's namespace, drops everything, runs the client |
-| `cordial-import` | verifies and installs the Roblox Android build you provide |
+| `hrdd` | the one daemon: registry, start queue with memory- and pressure-aware admission, per-instance state machine, process sets in cgroups, stats, the secret store |
+| `hrdctl` | the command line (`--json` everywhere) and `hrdctl tui` |
+| `hrd-panel` | optional HTTPS web panel on a random port, login token |
+| `hrd-netd` | the only root component: per-group network namespaces + WireGuard + fail-closed firewall |
+| `hrd-enter` | static launcher with one file capability; enters a group's namespace, drops everything, runs the client |
+| `hrd-import` | verifies and installs the Roblox Android build you provide |
 | `patches/cordial/` | three small patches to a build copy of the pinned upstream client |
 
 ## What it does not do
@@ -36,17 +36,17 @@ your command. The daemon starts with no clients and starts one only when told to
 ## Quick start (Debian 13)
 
 ```
-sudo apt install ./cordial-hrd_*.deb ./cordial-hrd-client_*.deb cage mesa-vulkan-drivers
-sudo cordialctl init && sudo systemctl enable --now cordial-netd cordiald
-cordialctl doctor
-cordialctl secrets unlock --create
-cordialctl runtime import --apk ~/roblox/
-cordialctl account add alt-01 && cordialctl account login alt-01
-sudo cordialctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
-cordialctl group create g01 --network de-1 --capacity 20
-cordialctl group assign g01 --accounts g01.txt
-cordialctl network apply
-cordialctl group start g01 --place-id 1234567890 && cordialctl status
+sudo apt install ./hrd_*.deb ./hrd-client_*.deb cage mesa-vulkan-drivers
+sudo hrdctl init && sudo systemctl enable --now hrd-netd hrdd
+hrdctl doctor
+hrdctl secrets unlock --create
+hrdctl runtime import --apk ~/roblox/
+hrdctl account add alt-01 && hrdctl account login alt-01
+sudo hrdctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
+hrdctl group create g01 --network de-1 --capacity 20
+hrdctl group assign g01 --accounts g01.txt
+hrdctl network apply
+hrdctl group start g01 --place-id 1234567890 && hrdctl status
 ```
 
 ## Documents
@@ -62,8 +62,8 @@ Licence: GPL-3.0-or-later ([LICENSE](LICENSE)); upstream Cordial is GPL-3.0 too.
 
 ## Po polsku (skrót)
 
-Menedżer wielu klientów Cordial z terminala (SSH) dla Debiana, dla własnych kont i
-własnych experiences: jeden daemon `cordiald`, CLI `cordialctl` (+ TUI), opcjonalny
+HRD to menedżer wielu klientów Cordial (terminal przez SSH i opcjonalny panel WWW) dla Debiana, dla własnych kont i
+własnych experiences: jeden daemon `hrdd`, CLI `hrdctl` (+ TUI), opcjonalny
 panel WWW (losowy port, HTTPS, token — `docs/panel.md`), grupy sieciowe z
 przestrzenią nazw i WireGuard (fail-closed), bezpieczny magazyn sesji (keyring
 odblokowywany hasłem po każdym restarcie), kolejka startów z kontrolą pamięci, tryby

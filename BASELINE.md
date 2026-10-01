@@ -185,9 +185,9 @@ answers the engine's imports as *cordial*, *host* (glibc) or *stub*, stands up
 
 ## What this project implements (none of it exists upstream)
 
-The CLI (`cordialctl`), the daemon (`cordiald`), the privileged network helper
-(`cordial-netd`), the namespace-entry wrapper (`cordial-enter`), the runtime
-importer (`cordial-import`), the optional web panel (`cordial-panel`), the
+The CLI (`hrdctl`), the daemon (`hrdd`), the privileged network helper
+(`hrd-netd`), the namespace-entry wrapper (`hrd-enter`), the runtime
+importer (`hrd-import`), the optional web panel (`hrd-panel`), the
 Debian packaging, and the patch queue. Their status is tracked in
 [`docs/status.md`](docs/status.md) with the labels *implemented*, *compiled*,
 *unverified at runtime*, *blocked by a named dependency*, *not implemented*.

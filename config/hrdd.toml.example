@@ -1,0 +1,150 @@
+# /etc/cordial-hrd/hrdd.toml
+#
+# Every key is shown with the value it has when left out, except where a comment
+# says the example differs. Unknown keys are errors, so a typo cannot silently
+# fall back to a default. Changes made with `hrdctl config set` (or the panel)
+# are kept in /var/lib/cordial-hrd/config-overrides.json and win over this file;
+# `hrdctl config unset KEY` returns a key to what is written here.
+#
+# Nothing in this file is a secret. Nothing in it is a statement about what
+# Roblox, the kernel or your hardware will tolerate: the numbers are your
+# decisions or stated guesses.
+
+[service]
+# The unprivileged account the daemon and every client run as. Never root.
+user = "cordial"
+group = "cordial"
+
+[control]
+# Mode of the control socket /run/cordial-hrd/control.sock. With 0660 and the
+# socket's group set to the service group, members of that group can operate the
+# fleet. Add your admin user to the group (`adduser alice cordial`).
+socket_mode = "0660"
+# Extra uids accepted in addition to root, the service user and the group.
+allowed_uids = []
+
+[scheduler]
+# The most instances the manager will hold live at once. The MANAGER's design
+# target; it is not a claim that the machine can run that many engines (each is
+# on the order of a gigabyte; see docs/memory.md and docs/gpu-less.md).
+max_instances = 300
+# Starts in flight at once. 0 chooses from the machine: one on a small machine or
+# when frames are drawn on the CPU, more where there are cores to spare.
+max_concurrent_starts = 0
+# Minimum gap between two starts while another is in flight, milliseconds.
+min_start_interval_ms = 3000
+# `starting` and `joining` that last longer than this become `failed`.
+start_timeout_s = 300
+join_timeout_s = 300
+# Seconds between asking a client to exit and killing its whole process set.
+stop_grace_s = 20
+# A start waits while free memory, after reserving what starts already in flight
+# are still expected to take, would fall below this.
+min_available_mem_mib = 2048
+# What one start is assumed to add until there are measurements; replaced by the
+# observed peak of finished starts (see `hrdctl daemon info`).
+assumed_start_peak_mib = 1536
+# A start waits while the kernel's 10-second memory / CPU pressure (percent of
+# time some task stalled) is above these. 0 switches a check off.
+max_memory_pressure_avg10 = 20.0
+max_cpu_pressure_avg10 = 75.0
+# After the engine reports a disconnection, how long to wait for it to join
+# somewhere else (a teleport) before the session is called disconnected and its
+# processes are released. Nothing is ever restarted.
+disconnect_grace_s = 20
+# What happens to running clients when the daemon stops: "keep" (the next daemon
+# adopts them) or "stop".
+on_daemon_stop = "keep"
+
+[resources]
+# "compatible" (upstream behaviour), "minimal" or "aggressive": concrete lists of
+# settings, in docs/memory.md. Per account override: `account set NAME --mode`.
+default_mode = "compatible"
+# cgroup limits per client in MiB; 0 leaves them unset. memory.high throttles and
+# reclaims; memory.max kills inside the client. A limit only ever makes a process
+# die or slow down. It never makes it smaller.
+memory_high_mib = 0
+memory_max_mib = 0
+# swap_max_mib = 0            # unset by default; pushing an engine to swap lowers RSS and makes nothing cheaper
+cpu_weight = 100
+pids_max = 2048
+# Raised so that under memory pressure the kernel prefers a client to the manager.
+oom_score_adj = 300
+# Ask the kernel to merge identical anonymous pages between clients (Linux 6.4+).
+# Off: ksmd's CPU is charged to no client, and how many pages are identical is unmeasured.
+ksm = false
+
+[engine]
+# "cage": each client runs in its own nested headless compositor (the only
+# arrangement upstream has exercised). "external": use the display the
+# environment provides.
+compositor = "cage"
+# How the join link reaches the client: "argv" (upstream's --join-url; private
+# server codes refused because every local user can read arguments) or "env"
+# (needs the patched cordial-run, patches/cordial/).
+join_url_via = "argv"
+# "auto" uses a DRM render node if the service user can open one, else draws on
+# the CPU; "software" never touches /dev/dri; "gpu" refuses to start without one.
+# A server with no graphics card runs with "auto" or "software".
+graphics = "auto"
+# Threads llvmpipe/lavapipe may use per client when drawing on the CPU. 0 is the
+# Mesa default (one per core, PER CLIENT): on few cores use 1.
+software_threads = 0
+# Pin each client to this many CPUs, round-robin. 0 leaves the scheduler alone.
+cpus_per_instance = 0
+# Path of the lavapipe ICD file; empty searches /usr/share/vulkan/icd.d/lvp_icd*.json.
+vulkan_icd = ""
+cordial_run = "/usr/lib/hrd/cordial-run"
+enter = "/usr/lib/hrd/hrd-enter"
+importer = "/usr/lib/hrd/hrd-import"
+# WIDTHxHEIGHT, at least 320x240. Empty: the resource mode decides.
+resolution = ""
+
+[engine.env]
+# Extra environment for clients. Only CORDIAL_* and MIMALLOC_* names are accepted.
+# MIMALLOC_PURGE_DELAY = "0"
+
+[stats]
+# Seconds between samples of cheap counters.
+interval_s = 5
+# Seconds between smaps_rollup reads (PSS/USS), which walk a process's memory
+# map. Each round reads at most 20 instances. 0 turns PSS/USS sampling off.
+pss_interval_s = 30
+
+[secrets]
+# Sessions are kept in a Secret Service on a private bus, served by a headless
+# gnome-keyring, unlocked by a passphrase you type after every reboot.
+backend = "secret_service"
+keyring_daemon = "/usr/bin/gnome-keyring-daemon"
+dbus_daemon = "/usr/bin/dbus-daemon"
+
+[network]
+# Permit groups with no tunnel. Off: an account whose group has none is refused,
+# because "no tunnel" must never quietly mean "this server's own address".
+allow_unrouted = false
+# A WireGuard handshake older than this makes a network `unverified`.
+handshake_max_age_s = 180
+
+[logs]
+# A client log larger than this is copied to .1 and truncated (also while the client
+# runs; a few bytes written at that instant can be lost) or moved to .1 at the next start.
+max_bytes = 16777216
+
+[login]
+# A sign-in session is stopped after this long.
+timeout_s = 900
+# Let you click, type and press keys in a sign-in client from the terminal, one
+# action per command, to type a password or a code. Only sign-in clients have it.
+console = true
+max_text_len = 256
+
+[runtime]
+# Keep the Roblox build current. Off: the daemon makes no network request of its
+# own. On: every check_interval_h hours it asks the mirror upstream Cordial uses
+# (APKPure, x86-64 only) for the newest version; if that is newer than the
+# installed one it downloads it, checks Roblox's signing certificate, installs
+# it, and (make_current) selects it for clients started from then on. Running
+# clients are never touched. To go back: `hrdctl runtime use VERSION`.
+auto_update = false
+check_interval_h = 6
+make_current = true

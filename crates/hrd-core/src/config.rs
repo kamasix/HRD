@@ -1,10 +1,10 @@
-//! `cordiald.toml`.
+//! `hrdd.toml`.
 //!
 //! Every number here is an operator decision or a stated assumption, and the
 //! defaults say which. Nothing in this file is a claim about what Roblox, the
 //! kernel or the hardware will tolerate: `max_instances` is the manager's own
 //! design target, `assumed_start_peak_mib` is a first guess to be replaced by
-//! what `cordialctl stats` shows on the real machine, and a group's capacity
+//! what `hrdctl stats` shows on the real machine, and a group's capacity
 //! is an organisational limit.
 //!
 //! Unknown keys are an error. A typo in a limit that silently falls back to a
@@ -254,7 +254,7 @@ pub struct EngineCfg {
     /// Path of the per-instance launcher that becomes `cordial-run` (or `cage`)
     /// after entering the group's namespace.
     pub enter: String,
-    /// Path of `cordial-import`, which the daemon runs (as the service user,
+    /// Path of `hrd-import`, which the daemon runs (as the service user,
     /// with the operator's files passed as descriptors) to install a runtime.
     pub importer: String,
     /// Render resolution, `WIDTHxHEIGHT`. Empty uses the resource mode's
@@ -275,9 +275,9 @@ impl Default for EngineCfg {
             software_threads: 0,
             cpus_per_instance: 0,
             vulkan_icd: String::new(),
-            cordial_run: "/usr/lib/cordial-hrd/cordial-run".into(),
-            enter: "/usr/lib/cordial-hrd/cordial-enter".into(),
-            importer: "/usr/lib/cordial-hrd/cordial-import".into(),
+            cordial_run: "/usr/lib/hrd/cordial-run".into(),
+            enter: "/usr/lib/hrd/hrd-enter".into(),
+            importer: "/usr/lib/hrd/hrd-import".into(),
             resolution: String::new(),
             env: BTreeMap::new(),
         }
@@ -403,7 +403,7 @@ pub struct LoginCfg {
     /// A sign-in session is stopped after this long whatever happens.
     pub timeout_s: u64,
     /// Let the operator send clicks, keys and text to a *sign-in* client from
-    /// `cordialctl` or the panel, one action per request, to type a password or
+    /// `hrdctl` or the panel, one action per request, to type a password or
     /// confirm a code. It exists only for sessions started by `account login`;
     /// clients that play never have a control surface. Off: sign in on a
     /// machine with a display instead (docs/accounts.md).
@@ -430,7 +430,41 @@ pub fn auto_concurrent_starts(cpus: usize, software_graphics: bool) -> u32 {
     (cpus / per).clamp(1, 8) as u32
 }
 
+/// Programs the packages installed before the rename to HRD, which
+/// `hrdctl init` wrote into the configuration file as explicit values. A file
+/// that still says one of these means "the default", and the program is now
+/// somewhere else, so the old value is read as the new default instead of
+/// pointing the daemon at a file that no longer exists.
+const LEGACY_PROGRAM_PATHS: [(&str, &str); 3] = [
+    (
+        "/usr/lib/cordial-hrd/cordial-run",
+        "/usr/lib/hrd/cordial-run",
+    ),
+    (
+        "/usr/lib/cordial-hrd/cordial-enter",
+        "/usr/lib/hrd/hrd-enter",
+    ),
+    (
+        "/usr/lib/cordial-hrd/cordial-import",
+        "/usr/lib/hrd/hrd-import",
+    ),
+];
+
 impl Config {
+    /// Read the three program paths written by an older `init` as the current
+    /// defaults. Exact matches only: a path the operator chose is left alone.
+    pub fn upgrade_legacy_paths(&mut self) {
+        for slot in [
+            &mut self.engine.cordial_run,
+            &mut self.engine.enter,
+            &mut self.engine.importer,
+        ] {
+            if let Some((_, new)) = LEGACY_PROGRAM_PATHS.iter().find(|(old, _)| slot == old) {
+                *slot = (*new).to_string();
+            }
+        }
+    }
+
     /// Load `path`; a missing file yields the defaults.
     pub fn load(path: &Path) -> Result<Config> {
         match fsutil::read_limited_opt(path, 256 * 1024)? {
@@ -439,8 +473,9 @@ impl Config {
                 let text = std::str::from_utf8(&bytes).map_err(|_| {
                     Error::invalid(format!("{} is not valid UTF-8", path.display()))
                 })?;
-                let cfg: Config = toml::from_str(text)
+                let mut cfg: Config = toml::from_str(text)
                     .map_err(|e| Error::invalid(format!("{}: {e}", path.display())))?;
+                cfg.upgrade_legacy_paths();
                 cfg.validate()?;
                 Ok(cfg)
             }
@@ -703,7 +738,7 @@ mod tests {
     #[test]
     fn the_shipped_example_parses_and_says_what_the_defaults_say() {
         // max_concurrent_starts is 0 (auto) in the example and 2 in the defaults.
-        let text = include_str!("../../../config/cordiald.toml.example");
+        let text = include_str!("../../../config/hrdd.toml.example");
         let c: Config =
             toml::from_str(text).expect("the example must be valid TOML with known keys");
         c.validate().unwrap();
@@ -721,8 +756,27 @@ mod tests {
     }
 
     #[test]
+    fn program_paths_written_by_an_older_init_are_read_as_the_new_defaults() {
+        let old = "[engine]\n\
+            cordial_run = \"/usr/lib/cordial-hrd/cordial-run\"\n\
+            enter = \"/usr/lib/cordial-hrd/cordial-enter\"\n\
+            importer = \"/usr/lib/cordial-hrd/cordial-import\"\n";
+        let mut c: Config = toml::from_str(old).unwrap();
+        c.upgrade_legacy_paths();
+        let d = Config::default();
+        assert_eq!(c.engine.cordial_run, d.engine.cordial_run);
+        assert_eq!(c.engine.enter, d.engine.enter);
+        assert_eq!(c.engine.importer, d.engine.importer);
+
+        // A path somebody chose themselves is never rewritten.
+        let mut own: Config = toml::from_str("[engine]\nenter = \"/opt/mine/enter\"\n").unwrap();
+        own.upgrade_legacy_paths();
+        assert_eq!(own.engine.enter, "/opt/mine/enter");
+    }
+
+    #[test]
     fn a_missing_file_gives_the_defaults() {
-        let c = Config::load(Path::new("/nonexistent/cordiald.toml")).unwrap();
+        let c = Config::load(Path::new("/nonexistent/hrdd.toml")).unwrap();
         assert_eq!(
             c.scheduler.max_concurrent_starts, 0,
             "0 means: choose from the machine"

@@ -1,19 +1,21 @@
-Package: cordial-hrd
+Package: hrd
 Version: @VERSION@
 Architecture: @ARCH@
-Maintainer: cordial-hrd local build <root@localhost>
+Maintainer: hrd local build <root@localhost>
 Installed-Size: @SIZE@
 Depends: systemd (>= 254), iproute2, nftables, wireguard-tools, dbus-daemon, gnome-keyring, libcap2-bin, @SHLIBS@
-Recommends: cordial-hrd-client
+Recommends: hrd-client
+Conflicts: cordial-hrd
+Replaces: cordial-hrd
 Suggests: cage, mesa-vulkan-drivers
 Section: admin
 Priority: optional
 Homepage: https://github.com/kamasix/HRD
-Description: Terminal-only manager for many Cordial clients
- A daemon (cordiald), a command line (cordialctl) and two small privileged
- helpers that run many independent Cordial clients, each with its own profile,
- process set and network group, on a Debian server without a desktop.
+Description: HRD, a manager for many Cordial clients
+ A daemon (hrdd), a command line (hrdctl), an optional web panel (hrd-panel)
+ and two small privileged helpers that run many independent Cordial clients, each
+ with its own profile, process set and proxy, on a Debian server without a desktop.
  .
  The package starts nothing by itself: no client, no network change. It does not
- contain the Roblox application or the client binary (see cordial-hrd-client);
- the Roblox build is imported by the operator with `cordialctl runtime import`.
+ contain the Roblox application or the client binary (see hrd-client);
+ the Roblox build is imported by the operator with `hrdctl runtime import`.

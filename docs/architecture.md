@@ -5,19 +5,19 @@
 ```
             operator (SSH)                                   browser (optional)
                  |                                                  |
-   cordialctl ---+--- cordialctl tui                        cordial-panel (HTTPS)
+   hrdctl ---+--- hrdctl tui                        hrd-panel (HTTPS)
                  |                                                  |
                  +------------------ control socket -----------------+
                    /run/cordial-hrd/control.sock  (JSON lines, SO_PEERCRED)
                                       |
-                                  cordiald   (service user "cordial", not root)
+                                  hrdd   (service user "cordial", not root)
                    registry, queue, state machine, sampler, secret store supervisor
                      |            |                   |                    |
-        cordial-import        netd socket        one cgroup per         private session bus
+        hrd-import        netd socket        one cgroup per         private session bus
         (runs as the          /run/cordial-      client set             + gnome-keyring
          service user,        hrd/netd.sock                             (sessions, encrypted)
          files by fd)              |                   |
-                             cordial-netd      cordial-enter (file capability)
+                             hrd-netd      hrd-enter (file capability)
                              (root, 3 caps)    enters the group's namespace, drops all
                              namespaces,       privilege, execs
                              WireGuard, nft            |
@@ -25,18 +25,18 @@
                                               one process set per account       (closed, unmodified)
 ```
 
-* **`cordiald`** is the only long-running manager. It starts with no clients and
+* **`hrdd`** is the only long-running manager. It starts with no clients and
   starts one only when a command says so. It is never root.
-* **`cordialctl`** and the panel are clients of the control socket. Closing either
+* **`hrdctl`** and the panel are clients of the control socket. Closing either
   stops nothing.
-* **`cordial-netd`** is the only part of the system that is root. It accepts
+* **`hrd-netd`** is the only part of the system that is root. It accepts
   *names* (a group, a network) and derives every system change from
   configuration it stored itself. See [networking.md](networking.md).
-* **`cordial-enter`** is a static program with one file capability
+* **`hrd-enter`** is a static program with one file capability
   (`cap_sys_admin`). It enters a group's network namespace, overlays that group's
   DNS files in a private mount namespace, sets `no_new_privs`, empties every
   capability set, checks that, and only then runs the client.
-* **`cordial-import`** verifies and installs a Roblox Android build. The daemon
+* **`hrd-import`** verifies and installs a Roblox Android build. The daemon
   runs it with the operator's files passed as descriptors. See
   [install.md](install.md).
 * **`cordial-run`** is upstream Cordial's client (patched copy, see
@@ -46,10 +46,10 @@
 
 | component | runs as | can do | cannot do |
 |---|---|---|---|
-| `cordiald` | `cordial` | everything the service user can | anything as root |
+| `hrdd` | `cordial` | everything the service user can | anything as root |
 | a client | `cordial`, no capabilities | its own profile, its group's network | see another namespace's traffic, change its routes |
-| `cordial-netd` | root, `CAP_NET_ADMIN CAP_SYS_ADMIN CAP_CHOWN`, `no_new_privs` | create/remove its own namespaces, interfaces, nft tables | run a command from the manager; take an address, path, route or command from it |
-| `cordial-enter` | the caller, plus `cap_sys_admin` for the duration of its own setup | enter `/run/cordial-hrd-netns/<group>` | enter any other namespace; keep a capability past its exec |
+| `hrd-netd` | root, `CAP_NET_ADMIN CAP_SYS_ADMIN CAP_CHOWN`, `no_new_privs` | create/remove its own namespaces, interfaces, nft tables | run a command from the manager; take an address, path, route or command from it |
+| `hrd-enter` | the caller, plus `cap_sys_admin` for the duration of its own setup | enter `/run/cordial-hrd-netns/<group>` | enter any other namespace; keep a capability past its exec |
 
 All clients share one Unix user. **Isolation between accounts is separate
 directories, separate cgroups and separate network namespaces; it is not a
@@ -61,7 +61,7 @@ item. See [security.md](security.md).
 
 | what | where | owner |
 |---|---|---|
-| configuration | `/etc/cordial-hrd/cordiald.toml`, `netd.toml` | root |
+| configuration | `/etc/cordial-hrd/hrdd.toml`, `netd.toml` | root |
 | setting overrides | `/var/lib/cordial-hrd/config-overrides.json` | service user |
 | registry (accounts, groups, network metadata) | `/var/lib/cordial-hrd/registry.json` | service user |
 | per-instance last-run records | `/var/lib/cordial-hrd/instances/<account>.json` | service user |
@@ -103,7 +103,7 @@ configured/stopped/failed/disconnected/auth_required
 * **Nothing restarts.** No transition leads back to `queued`; only `instance
   start` does. A disconnect, a failure and an auth problem all release the
   process set and wait for the operator.
-* Signals are matched in `crates/cordiald/src/signals.rs`. They were read from
+* Signals are matched in `crates/hrdd/src/signals.rs`. They were read from
   upstream's source; none has been observed against a running client in this
   project ([status.md](status.md)).
 

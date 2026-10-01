@@ -1,6 +1,6 @@
 # Running it
 
-Everything is `cordialctl` over SSH. `--json` on any command prints JSON for
+Everything is `hrdctl` over SSH. `--json` on any command prints JSON for
 scripts; exit codes: 0 ok, 1 error, 2 bad usage or invalid input, 3 not found,
 4 conflict, 5 unavailable (daemon, helper, runtime, secret store, network not
 ready), 6 authentication required, 7 permission denied.
@@ -8,13 +8,13 @@ ready), 6 authentication required, 7 permission denied.
 ## A session, start to end
 
 ```
-cordialctl secrets status                # ready? after a reboot: secrets unlock
-cordialctl doctor                        # anything FAIL?
-cordialctl group start g01 --place-id 1234567890
-cordialctl status --live                 # queued -> starting -> joining -> connected
-cordialctl stats
-cordialctl instance stop alt-07          # polite stop, then the whole process set is ended
-cordialctl stop-all
+hrdctl secrets status                # ready? after a reboot: secrets unlock
+hrdctl doctor                        # anything FAIL?
+hrdctl group start g01 --place-id 1234567890
+hrdctl status --live                 # queued -> starting -> joining -> connected
+hrdctl stats
+hrdctl instance stop alt-07          # polite stop, then the whole process set is ended
+hrdctl stop-all
 ```
 
 `group start` only **queues**. The scheduler admits one start when: fewer than
@@ -46,14 +46,14 @@ is Roblox's; the manager records it and does not interpret it.
 
 ## A restart of the daemon
 
-`systemctl restart cordiald` leaves clients running. The new daemon finds each live
+`systemctl restart hrdd` leaves clients running. The new daemon finds each live
 process set, re-reads the client's log from the run's banner, and continues. Queued
 starts are dropped. A run whose processes are gone is closed as ended with an
 unobserved exit status. The keyring keeps running across a daemon restart.
 
 ## Sizing
 
-Start small and look: `cordialctl stats` (PSS and pressure), then raise
+Start small and look: `hrdctl stats` (PSS and pressure), then raise
 `scheduler.max_instances` and start more groups. 300 is the manager's ceiling,
 not a prediction for the machine ([memory.md](memory.md), [gpu-less.md](gpu-less.md)).
 Stop before the machine swaps or the OOM killer chooses for you: clients have
@@ -62,8 +62,8 @@ Stop before the machine swaps or the OOM killer chooses for you: clients have
 ## Automation
 
 ```
-cordialctl --json status --state connected | jq -r '.[].id'
-cordialctl --json status | jq '[.[] | .state] | group_by(.) | map({(.[0]): length}) | add'
+hrdctl --json status --state connected | jq -r '.[].id'
+hrdctl --json status | jq '[.[] | .state] | group_by(.) | map({(.[0]): length}) | add'
 ```
 
 Errors in JSON mode are `{"ok":false,"error":{"code":...,"message":...}}` on
@@ -73,8 +73,8 @@ standard output with a non-zero exit status.
 
 | symptom | look at |
 |---|---|
-| `cannot connect to control.sock` | `systemctl status cordiald`; are you in the `cordial` group? |
-| start refused: secret store | `cordialctl secrets status`, then `secrets unlock` |
+| `cannot connect to control.sock` | `systemctl status hrdd`; are you in the `cordial` group? |
+| start refused: secret store | `hrdctl secrets status`, then `secrets unlock` |
 | start refused: network not usable | `network list` (state and reason), `network plan`, `network apply` |
 | `failed` right after start | `instance show ID`, `logs ID`; `doctor` for a missing `cage` / Vulkan / client binary |
 | many `failed` at once under load | `stats`: memory pressure; raise `min_available_mem_mib`, lower `max_instances` |

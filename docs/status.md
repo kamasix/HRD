@@ -23,7 +23,7 @@ evidence that a session works.
 | Sign-in console | implemented, unit-tested with a fake control surface | **unverified**: completing a real sign-in this way |
 | Network groups: namespace + fail-closed firewall + DNS overlay | implemented; exercised on real namespaces with a veth stand-in | |
 | WireGuard device creation, handshake | compiled; **unverified** | sandbox kernel has no WireGuard |
-| `cordial-enter` | implemented; run as root and unprivileged | |
+| `hrd-enter` | implemented; run as root and unprivileged | |
 | Observed exit (STUN from inside the namespace) | implemented, parsing unit-tested | **unverified** on a real tunnel |
 | Gateway plan (files only) | implemented, unit-tested | never applied anywhere |
 | Stats (RSS/PSS/USS/swap/CPU/cgroup/disk/traffic) | implemented; parsing tested; sampled in the sandbox | values for a real client unknown |
@@ -57,7 +57,7 @@ fixed where stated in the commit log. These were **understood and not fixed**:
   the group by a dead leader are tracked. Use the packaged unit (`Delegate=yes`).
 * A sign-in run is stopped at the first signed-in screen; whether the client has
   finished writing its session by then is unverified.
-* `cordial-enter` does not check the caller against the group assignment (see
+* `hrd-enter` does not check the caller against the group assignment (see
   security.md).
 * Everything that depends on the real engine's log lines, WireGuard, systemd and
   a Debian 13 install is unverified at runtime.

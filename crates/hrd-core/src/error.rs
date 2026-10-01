@@ -73,7 +73,7 @@ impl Error {
         }
     }
 
-    /// Process exit status for `cordialctl`. Documented in `--help` and in
+    /// Process exit status for `hrdctl`. Documented in `--help` and in
     /// docs/operations.md; scripts are entitled to rely on these.
     pub fn exit_code(&self) -> u8 {
         match self {

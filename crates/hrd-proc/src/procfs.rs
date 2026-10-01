@@ -443,8 +443,8 @@ mod tests {
     #[test]
     fn cgroup_line_and_net_dev() {
         assert_eq!(
-            parse_cgroup_v2("12:cpu:/x\n0::/system.slice/cordiald.service/i/alt-1\n").as_deref(),
-            Some("/system.slice/cordiald.service/i/alt-1")
+            parse_cgroup_v2("12:cpu:/x\n0::/system.slice/hrdd.service/i/alt-1\n").as_deref(),
+            Some("/system.slice/hrdd.service/i/alt-1")
         );
         assert_eq!(parse_cgroup_v2("1:name=systemd:/\n"), None);
         let nd = "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0\n   wg0:  123456     100    0    0    0     0          0         0   654321     90    0    0    0     0       0          0\n";

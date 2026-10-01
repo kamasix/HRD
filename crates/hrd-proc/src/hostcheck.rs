@@ -1,4 +1,4 @@
-//! Checks about the machine, shared by `cordialctl doctor` (which must work
+//! Checks about the machine, shared by `hrdctl doctor` (which must work
 //! when the daemon is down) and the daemon.
 //!
 //! Each check says what it looked at. A check that cannot be made is `Unknown`,
@@ -213,14 +213,14 @@ pub fn host_checks(layout: &Layout, cfg: &Config) -> Vec<Check> {
             run_fix,
         ),
         (
-            "cordial-enter",
+            "hrd-enter",
             PathBuf::from(&cfg.engine.enter),
-            "install the cordial-hrd package",
+            "install the hrd package",
         ),
         (
-            "cordial-import",
+            "hrd-import",
             PathBuf::from(&cfg.engine.importer),
-            "install the cordial-hrd package",
+            "install the hrd package",
         ),
     ] {
         let (title, need) = (id, true);
@@ -239,9 +239,27 @@ pub fn host_checks(layout: &Layout, cfg: &Config) -> Vec<Check> {
     let enter = PathBuf::from(&cfg.engine.enter);
     if is_exec(&enter) {
         out.push(match has_file_capability(&enter) {
-            Some(true) => c("enter-cap", "cordial-enter capability", ok, "carries a file capability (cap_sys_admin)", None),
-            Some(false) => c("enter-cap", "cordial-enter capability", Fail, "no file capability: clients cannot enter their group's namespace", Some("setcap cap_sys_admin+ep /usr/lib/cordial-hrd/cordial-enter (the package does this)")),
-            None => c("enter-cap", "cordial-enter capability", Unknown, "could not read extended attributes", None),
+            Some(true) => c(
+                "enter-cap",
+                "hrd-enter capability",
+                ok,
+                "carries a file capability (cap_sys_admin)",
+                None,
+            ),
+            Some(false) => c(
+                "enter-cap",
+                "hrd-enter capability",
+                Fail,
+                "no file capability: clients cannot enter their group's namespace",
+                Some("setcap cap_sys_admin+ep /usr/lib/hrd/hrd-enter (the package does this)"),
+            ),
+            None => c(
+                "enter-cap",
+                "hrd-enter capability",
+                Unknown,
+                "could not read extended attributes",
+                None,
+            ),
         });
     }
     if cfg.engine.compositor == hrd_core::config::Compositor::Cage {

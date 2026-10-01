@@ -1,10 +1,10 @@
 #!/bin/bash
-# Build and install Cordial HRD on the Debian 13 machine this is run on.
+# Build and install HRD on the Debian 13 machine this is run on.
 # Run from the root of the clone:  scripts/bootstrap-debian.sh
 #
 # It installs build and runtime packages with apt, installs the pinned Rust
 # toolchain with rustup (for your user), builds both .deb files and installs
-# them, then runs `cordialctl doctor`. It does NOT log in any account, start any
+# them, then runs `hrdctl doctor`. It does NOT log in any account, start any
 # client, apply any network change or open any port. Everything it prints is
 # also written to bootstrap.log next to it. Needs sudo.
 set -eu
@@ -24,6 +24,24 @@ say() { printf '\n==> %s\n' "$*"; }
   say "fetching the pinned upstream Cordial and its submodules"
   git submodule update --init --recursive
 }
+
+if dpkg -s cordial-hrd >/dev/null 2>&1; then
+  cat <<'WARN'
+
+The package that was called cordial-hrd is installed. It is replaced by hrd (the
+same program under its new name). Your accounts, sessions and settings stay where
+they are: the directories under /etc, /var/lib and /run keep the name cordial-hrd
+on purpose, because the client files every saved sign-in under the full path of
+the profile directory.
+
+Clients that are running now are NOT carried over to the new daemon. Stop them
+first:   cordialctl stop-all
+WARN
+  if [ -t 0 ]; then
+    read -r -p "Continue? [y/N] " ans
+    [ "$ans" = y ] || [ "$ans" = Y ] || { echo "stopped; nothing was changed"; exit 1; }
+  fi
+fi
 
 say "1/5 packages"
 sudo apt-get update
@@ -48,18 +66,18 @@ say "4/5 building the client package (long: compiles upstream Cordial)"
 packaging/build-client.sh "$PWD/dist"
 
 say "5/5 installing"
-sudo apt-get install -y ./dist/cordial-hrd_*.deb ./dist/cordial-hrd-client_*.deb
+sudo apt-get install -y ./dist/hrd_*.deb ./dist/hrd-client_*.deb
 
 say "check"
 sudo systemctl daemon-reload
-sudo systemctl enable --now cordiald.service cordial-netd.service || true
+sudo systemctl enable --now hrdd.service hrd-netd.service || true
 sleep 2
-cordialctl doctor || true
+hrdctl doctor || true
 cat <<'NEXT'
 
 Installed. Nothing has been started and no account exists. Next (docs/install.md):
   sudo adduser "$USER" cordial        # then log out and in again
-  cordialctl secrets unlock --create  # choose a passphrase of 12+ characters
-  cordialctl runtime import --apk /path/to/roblox.apk
+  hrdctl secrets unlock --create  # choose a passphrase of 12+ characters
+  hrdctl runtime import --apk /path/to/roblox.apk
 Full log: bootstrap.log
 NEXT

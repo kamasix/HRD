@@ -11,7 +11,7 @@ what to expect.
 
 * `auto` (default): if the service user can open a DRM render node
   (`/dev/dri/renderD*`) the client uses it; otherwise it draws on the CPU.
-  `cordialctl doctor` says which.
+  `hrdctl doctor` says which.
 * `software`: never touches `/dev/dri`.
 * `gpu`: refuses to start a client without a render node instead of falling back.
 
@@ -53,8 +53,8 @@ no GPU, 8-16 GB) the honest statement is:
 * 300 clients on such a machine is not a realistic goal. 300 is the *manager's*
   design target (registry, queue, sampling, stop-all), not a statement about
   engines.
-* Find your number: start one, then two, then four, watching `cordialctl stats`
-  (RSS/PSS per class, memory pressure, CPU) and `cordialctl status`; set
+* Find your number: start one, then two, then four, watching `hrdctl stats`
+  (RSS/PSS per class, memory pressure, CPU) and `hrdctl status`; set
   `scheduler.max_instances` to what the machine sustains and leave headroom.
 
 ## Other Debian servers

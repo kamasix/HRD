@@ -1,4 +1,4 @@
-# cordial-netd.toml: read by the privileged helper.
+# hrd-netd.toml: read by the privileged helper.
 # service_user / service_group: who may use the helper (the daemon runs as this user)
 # apply_on_start: apply every group when the helper starts. Off: applying is always an explicit command.
 service_user = "cordial"

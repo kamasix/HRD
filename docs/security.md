@@ -30,14 +30,14 @@ never in the repository, packages or CI artifacts.
 
 ## Privilege
 
-* `cordiald` and every client: the `cordial` user, never root. The daemon refuses
+* `hrdd` and every client: the `cordial` user, never root. The daemon refuses
   to start as root (`--allow-root` exists for tests).
-* `cordial-netd`: root with three capabilities (one of them `CAP_SYS_ADMIN`,
+* `hrd-netd`: root with three capabilities (one of them `CAP_SYS_ADMIN`,
   which is close to root: treat a compromise of this process as a compromise of
   the host) and `no_new_privs`. It takes no commands and no paths. It does take
   a **WireGuard configuration** (its endpoint and keys) - but only from root:
   `PutNetwork` is refused for every other caller, so neither the manager nor the
-  panel can change where a group's traffic goes (`sudo cordialctl network add`).
+  panel can change where a group's traffic goes (`sudo hrdctl network add`).
   Planning, applying and removing groups is open to the service user, and works
   only on networks root defined. Its socket is in the root-owned
   `/run/cordial-hrd-netns/` (created `0600` and opened through the descriptor),
@@ -46,7 +46,7 @@ never in the repository, packages or CI artifacts.
   and runs them without a shell, with a cleared environment. Private keys are
   stored root-only; **the service user cannot read them**, but it can cause them
   to be used (apply a group).
-* `cordial-enter`: one file capability, `cap_sys_admin`, executable by root and
+* `hrd-enter`: one file capability, `cap_sys_admin`, executable by root and
   the service group only. It takes a group *name*, validates it as a slug, opens
   only a file under `/run/cordial-hrd-netns` (a constant: an option that chose the
   directory would let the caller choose the namespace) that must be an `nsfs` file
@@ -57,7 +57,7 @@ never in the repository, packages or CI artifacts.
   including that it refuses a caller that has `no_new_privs` set (the capability is
   then not granted). **Limits:** any process of the service user - including a
   compromised client started *without* a group, or any client that can exec it
-  directly - can run `cordial-enter` for *any* group, because the wrapper does not
+  directly - can run `hrd-enter` for *any* group, because the wrapper does not
   check the caller against the group's assignment. Clients started through it have
   `no_new_privs` and cannot re-enter a different namespace, but the boundary
   between groups is not enforced against a hostile same-user process. Do not use
@@ -66,7 +66,7 @@ never in the repository, packages or CI artifacts.
   the capability set to `CAP_SYS_ADMIN`.
 * Settings that widen access (`service.*`, `control.*`, `secrets.*`, the program
   paths, `engine.env`, `network.allow_unrouted`, `login.console`) can only be set
-  in the root-owned `/etc/cordial-hrd/cordiald.toml`. `config set` and the panel
+  in the root-owned `/etc/cordial-hrd/hrdd.toml`. `config set` and the panel
   refuse them, and the same keys in the user-writable overrides file are ignored
   (with a log line). A corrupt overrides file is set aside as `.rejected`; the
   daemon still starts.

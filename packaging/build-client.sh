@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build cordial-hrd-client_<version>_<arch>.deb: the patched upstream client.
+# Build hrd-client_<version>_<arch>.deb: the patched upstream client.
 #
 #   packaging/build-client.sh [OUTDIR]
 #
@@ -36,37 +36,39 @@ patches/cordial/apply.sh "$work/src"
     cargo build --release --locked -p cordial-runtime --bin cordial-run
 )
 pkg=$work/pkg
-install -d "$pkg/usr/lib/cordial-hrd" "$pkg/usr/share/doc/cordial-hrd-client" "$pkg/DEBIAN"
-install -m 0755 "$work/src/target/release/cordial-run" "$pkg/usr/lib/cordial-hrd/cordial-run"
-strip --strip-unneeded "$pkg/usr/lib/cordial-hrd/cordial-run"
-install -m 0644 "$root/LICENSE" "$pkg/usr/share/doc/cordial-hrd-client/copyright"
+install -d "$pkg/usr/lib/hrd" "$pkg/usr/share/doc/hrd-client" "$pkg/DEBIAN"
+install -m 0755 "$work/src/target/release/cordial-run" "$pkg/usr/lib/hrd/cordial-run"
+strip --strip-unneeded "$pkg/usr/lib/hrd/cordial-run"
+install -m 0644 "$root/LICENSE" "$pkg/usr/share/doc/hrd-client/copyright"
 for f in NOTICE THIRD-PARTY-NOTICES.md; do
-    [ -f "$work/src/$f" ] && install -m 0644 "$work/src/$f" "$pkg/usr/share/doc/cordial-hrd-client/upstream-$f"
+    [ -f "$work/src/$f" ] && install -m 0644 "$work/src/$f" "$pkg/usr/share/doc/hrd-client/upstream-$f"
 done
-install -m 0644 "$root/NOTICE.md" "$pkg/usr/share/doc/cordial-hrd-client/NOTICE.md"
-install -m 0644 "$root"/patches/cordial/*.patch "$pkg/usr/share/doc/cordial-hrd-client/" 
+install -m 0644 "$root/NOTICE.md" "$pkg/usr/share/doc/hrd-client/NOTICE.md"
+install -m 0644 "$root"/patches/cordial/*.patch "$pkg/usr/share/doc/hrd-client/" 
 
 # Depends: from the libraries the binary really links, resolved by dpkg.
 mkdir -p "$work/shl/debian" && : > "$work/shl/debian/control"
-depends=$(cd "$work/shl" && dpkg-shlibdeps -O -e"$pkg/usr/lib/cordial-hrd/cordial-run" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+depends=$(cd "$work/shl" && dpkg-shlibdeps -O -e"$pkg/usr/lib/hrd/cordial-run" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
 size=$(du -sk "$pkg" | cut -f1)
 cat > "$pkg/DEBIAN/control" <<CTL
-Package: cordial-hrd-client
+Package: hrd-client
 Version: $version
 Architecture: $arch
-Maintainer: cordial-hrd local build <root@localhost>
+Maintainer: hrd local build <root@localhost>
 Installed-Size: $size
 Depends: ${depends:-libgtk-4-1, libadwaita-1-0, libvulkan1}, cage
 Recommends: mesa-vulkan-drivers
+Conflicts: cordial-hrd-client
+Replaces: cordial-hrd-client
 Section: admin
 Priority: optional
-Description: Cordial client (patched build) for cordial-hrd
+Description: Cordial client (patched build) for HRD
  Upstream Cordial's cordial-run, built from a pinned commit with a small patch
  queue (join link from the environment, shared asset mapping, CPU count cap).
  It needs the Roblox Android build, which this package does not contain; import
- it with `cordialctl runtime import`.
+ it with `hrdctl runtime import`.
 CTL
 find "$pkg" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 mkdir -p "$out"
-dpkg-deb --root-owner-group -Zxz --build "$pkg" "$out/cordial-hrd-client_${version}_${arch}.deb"
-( cd "$out" && sha256sum "cordial-hrd-client_${version}_${arch}.deb" )
+dpkg-deb --root-owner-group -Zxz --build "$pkg" "$out/hrd-client_${version}_${arch}.deb"
+( cd "$out" && sha256sum "hrd-client_${version}_${arch}.deb" )

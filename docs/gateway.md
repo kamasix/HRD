@@ -3,7 +3,7 @@
 The home server has no fixed address and cannot take inbound connections. The
 VPS does both jobs a gateway needs: it is the far end of every group's tunnel and
 it is where the traffic appears to come from. **Nothing here is applied for you.**
-`cordialctl gateway plan` writes files; you read them and apply them on the VPS.
+`hrdctl gateway plan` writes files; you read them and apply them on the VPS.
 
 ## What you need from the provider
 
@@ -17,8 +17,8 @@ it is where the traffic appears to come from. **Nothing here is applied for you.
 ## Plan
 
 ```
-cordialctl network set de-1 --exit-ip 203.0.113.11      # per network, the address you expect
-cordialctl gateway plan --out ./gw --interface wg-clients --listen-port 51820 \
+hrdctl network set de-1 --exit-ip 203.0.113.11      # per network, the address you expect
+hrdctl gateway plan --out ./gw --interface wg-clients --listen-port 51820 \
         --address 10.66.0.1/16 --uplink eth0
 ```
 
@@ -31,8 +31,8 @@ The output:
 * `<interface>.conf` (for the example, `wg-clients.conf`) - the gateway's WireGuard interface with one `[Peer]` per
   group (their client public keys are derived by the helper from the imported
   private keys). No `PostUp`/`PostDown` lines: nothing is run from a config file.
-* `cordial-hrd-gateway.nft` - forward/SNAT rules, default-drop, per group.
-* `99-cordial-hrd-gateway.conf` - a sysctl drop-in: `net.ipv4.ip_forward = 1` and nothing else.
+* `hrd-gateway.nft` - forward/SNAT rules, default-drop, per group.
+* `99-hrd-gateway.conf` - a sysctl drop-in: `net.ipv4.ip_forward = 1` and nothing else.
 * `README-gateway.txt` - the exact commands to apply and to undo, and warnings: a preshared
   key in an imported file must be put on the gateway's peer by hand.
 
@@ -46,7 +46,7 @@ from a browser at `https://<VPS address>:<port>` the VPS forwards that port
 through a management tunnel to the home server:
 
 ```
-cordialctl gateway plan ... --panel-target 10.66.0.2 --panel-port 24817 \
+hrdctl gateway plan ... --panel-target 10.66.0.2 --panel-port 24817 \
         --panel-allow 198.51.100.7/32 --panel-mgmt-key <management peer public key>
 ```
 
@@ -56,7 +56,7 @@ is an extra layer, not a substitute.
 
 ## Verifying
 
-After applying on the gateway and on the home server (`cordialctl network apply`):
-`cordialctl network list` shows the latest handshake age, `cordialctl network
+After applying on the gateway and on the home server (`hrdctl network apply`):
+`hrdctl network list` shows the latest handshake age, `hrdctl network
 check NAME` shows the observed exit next to the configured one. Neither has been
 run against a real gateway by this project.

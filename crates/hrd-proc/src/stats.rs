@@ -9,7 +9,7 @@ use crate::procfs;
 /// What a process is for, decided by its executable and not its name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Class {
-    /// `cordiald`, `cordialctl`, `cordial-netd`.
+    /// `hrdd`, `hrdctl`, `hrd-netd`.
     Manager,
     /// `cordial-run`: the open layer and, inside it, the closed engine.
     /// These two cannot be told apart from outside the process.
@@ -25,7 +25,7 @@ pub fn classify(exe_basename: &str) -> Class {
     match exe_basename {
         "cordial-run" => Class::Engine,
         "cage" => Class::Compositor,
-        "cordiald" | "cordialctl" | "cordial-netd" | "cordial-enter" => Class::Manager,
+        "hrdd" | "hrdctl" | "hrd-netd" | "hrd-enter" => Class::Manager,
         _ => Class::Helper,
     }
 }
@@ -178,7 +178,7 @@ mod tests {
     fn classification_follows_the_executable() {
         assert_eq!(classify("cordial-run"), Class::Engine);
         assert_eq!(classify("cage"), Class::Compositor);
-        assert_eq!(classify("cordiald"), Class::Manager);
+        assert_eq!(classify("hrdd"), Class::Manager);
         assert_eq!(classify("deno"), Class::Helper);
         assert_eq!(classify("WebKitWebProcess"), Class::Helper);
         // `Main` is what the engine renames its main thread to; it must not

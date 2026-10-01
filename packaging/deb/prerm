@@ -3,11 +3,11 @@ set -e
 case "$1" in
 remove|deconfigure)
     # Stopping the daemon leaves the clients running (KillMode=process); say so.
-    if systemctl is-active --quiet cordiald 2>/dev/null; then
-        echo "cordial-hrd: stopping cordiald. Running clients are NOT stopped; use 'cordialctl stop-all' first if you want them gone."
-        systemctl stop cordiald || true
+    if systemctl is-active --quiet hrdd 2>/dev/null; then
+        echo "hrd: stopping hrdd. Running clients are NOT stopped; use 'hrdctl stop-all' first if you want them gone."
+        systemctl stop hrdd || true
     fi
-    systemctl stop cordial-netd >/dev/null 2>&1 || true
+    systemctl stop hrd-netd >/dev/null 2>&1 || true
     ;;
 esac
 exit 0

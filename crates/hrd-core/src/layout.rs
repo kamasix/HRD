@@ -39,7 +39,11 @@ pub struct Layout {
 
 /// Environment variable that relocates the whole layout under one directory.
 /// For development and tests; a packaged install never sets it.
-pub const ROOT_ENV: &str = "CORDIAL_HRD_ROOT";
+pub const ROOT_ENV: &str = "HRD_ROOT";
+
+/// The name it had before the rename to HRD, still honoured when `HRD_ROOT` is
+/// not set.
+const LEGACY_ROOT_ENV: &str = "CORDIAL_HRD_ROOT";
 
 impl Layout {
     /// The packaged layout.
@@ -66,16 +70,25 @@ impl Layout {
         }
     }
 
-    /// `CORDIAL_HRD_ROOT` if set, the system layout otherwise.
+    /// `HRD_ROOT` if set, the system layout otherwise.
     pub fn from_env() -> Self {
-        match std::env::var_os(ROOT_ENV) {
+        match std::env::var_os(ROOT_ENV).or_else(|| std::env::var_os(LEGACY_ROOT_ENV)) {
             Some(r) if !r.is_empty() => Layout::under(Path::new(&r)),
             _ => Layout::system(),
         }
     }
 
+    /// The daemon's configuration file. An install made before the rename to HRD
+    /// has `cordiald.toml`; it is used for as long as there is no `hrdd.toml`,
+    /// so that an upgrade does not quietly fall back to the defaults.
     pub fn config_file(&self) -> PathBuf {
-        self.config_dir.join("cordiald.toml")
+        let current = self.config_dir.join("hrdd.toml");
+        let legacy = self.config_dir.join("cordiald.toml");
+        if !current.exists() && legacy.exists() {
+            legacy
+        } else {
+            current
+        }
     }
 
     pub fn control_socket(&self) -> PathBuf {
@@ -104,7 +117,7 @@ impl Layout {
     }
 
     pub fn daemon_lock(&self) -> PathBuf {
-        self.state_dir.join("cordiald.lock")
+        self.state_dir.join("hrdd.lock")
     }
 
     /// Per-account root. `HOME` and every `XDG_*_HOME` of the account's client
@@ -227,6 +240,23 @@ mod tests {
         ] {
             assert!(p.starts_with(root), "{} escapes the root", p.display());
         }
+    }
+
+    #[test]
+    fn an_older_install_keeps_its_configuration_file() {
+        let root = std::env::temp_dir().join(format!("hrd-layout-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let l = Layout::under(&root);
+        std::fs::create_dir_all(&l.config_dir).unwrap();
+        // Nothing yet: the current name.
+        assert!(l.config_file().ends_with("hrdd.toml"));
+        // Only the old name exists: it is used, so an upgrade keeps the settings.
+        std::fs::write(l.config_dir.join("cordiald.toml"), "").unwrap();
+        assert!(l.config_file().ends_with("cordiald.toml"));
+        // Once the new file exists it wins.
+        std::fs::write(l.config_dir.join("hrdd.toml"), "").unwrap();
+        assert!(l.config_file().ends_with("hrdd.toml"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

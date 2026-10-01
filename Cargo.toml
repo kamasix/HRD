@@ -5,11 +5,11 @@ members = [
     "crates/hrd-proc",
     "crates/hrd-net",
     "crates/hrd-import",
-    "crates/cordialctl",
-    "crates/cordiald",
-    "crates/cordial-netd",
-    "crates/cordial-enter",
-    "crates/cordial-panel",
+    "crates/hrdctl",
+    "crates/hrdd",
+    "crates/hrd-netd",
+    "crates/hrd-enter",
+    "crates/hrd-panel",
 ]
 # Upstream Cordial lives in third_party/cordial and is a workspace of its own.
 # Nothing under it is a member of this workspace; the two halves meet through

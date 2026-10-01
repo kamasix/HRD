@@ -8,7 +8,7 @@ project's reach. No figure here is a promise about your machine.
 
 | | what | who controls it | what this project did |
 |---|---|---|---|
-| **A** | the manager (`cordiald`, `cordialctl`, the helpers) | this project | measured, see below |
+| **A** | the manager (`hrdd`, `hrdctl`, the helpers) | this project | measured, see below |
 | **B** | Cordial's open layer inside each `cordial-run`: GTK/libadwaita, the Android-framework emulation, the bionic linker, the asset cache, the nested compositor and the Vulkan/GL driver it talks to | upstream Cordial, patchable | a few real levers, below; **cost unmeasured** |
 | **C** | the closed Roblox engine in the same process: its heap (statically linked mimalloc), its ~60-70 threads' stacks, textures and meshes it decodes, the replicated state of the game | Roblox, and the experience being played | **nothing can be done here from outside**; the client is the unmodified engine |
 
@@ -19,7 +19,7 @@ flattering number: a manager that holds 300 records in 4 MiB says nothing about
 ## A: the manager (measured)
 
 Release build, this project's own code, on the machine it was written on (x86-64
-Linux 6.18, 4 CPUs), `cordiald` with no live clients:
+Linux 6.18, 4 CPUs), `hrdd` with no live clients:
 
 | state | VmRSS | PSS | threads |
 |---|---|---|---|
@@ -29,7 +29,7 @@ Linux 6.18, 4 CPUs), `cordiald` with no live clients:
 
 Not measured: the daemon with 300 *live* clients (the sampler, log tails and the
 admission code do per-client work, which has been written to be small and has
-not been observed at that size). `cordialctl` is a short-lived process; its
+not been observed at that size). `hrdctl` is a short-lived process; its
 binary is about 2.4 MB, which is **not** evidence of its memory use.
 
 ## B and C: what is known
@@ -38,7 +38,7 @@ Upstream's own numbers, which are the only ones anyone has: 500-802 MB resident
 at the signed-out landing page, n=3, on the maintainer's desktop
 (`docs/analysis/startup-and-idle-cost.md` upstream); the "~1.5 GB per instance"
 in ADR-012 has no recorded method. **No signed-in, in-game or multi-client
-figure exists**, here or upstream. `cordialctl stats` shows, on your machine,
+figure exists**, here or upstream. `hrdctl stats` shows, on your machine,
 RSS, PSS, USS, swap and `memory.current` separately for engine, compositor and
 helper processes: that is how to learn the real number.
 
@@ -109,7 +109,7 @@ looks at (surface size, present mode, desktop integration), not content.
 ## Modes
 
 Each mode is a list of environment variables that a program actually reads
-(`crates/cordiald/src/spawn.rs`, `mode_env`; tested). A variable the closed
+(`crates/hrdd/src/spawn.rs`, `mode_env`; tested). A variable the closed
 engine's allocator may ignore is marked.
 
 | variable | compatible | minimal | aggressive | reads it | expected effect |
@@ -134,7 +134,7 @@ kills, a fake "no assets" switch, pausing the engine loop to cut frame rate.
 * `resources.ksm = true` asks the kernel to merge identical anonymous pages
   between clients (Linux 6.4+). Its CPU is charged to `ksmd`, not to any client,
   and whether the engine has enough identical pages to pay for it is unmeasured;
-  `cordialctl stats` shows the merge counters so you can tell.
+  `hrdctl stats` shows the merge counters so you can tell.
 * `resources.memory_high_mib` throttles and reclaims above a line. With no swap,
   anonymous memory cannot be reclaimed, so a client over the line is slowed
   rather than made smaller.

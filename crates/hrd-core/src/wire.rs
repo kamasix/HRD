@@ -220,7 +220,7 @@ impl Client {
     pub fn connect(path: &Path, who: &str, timeout: Option<Duration>) -> Result<Client> {
         let stream = UnixStream::connect(path).map_err(|e| {
             let hint = match e.kind() {
-                io::ErrorKind::NotFound => " (is cordiald running? `systemctl status cordiald`)",
+                io::ErrorKind::NotFound => " (is hrdd running? `systemctl status hrdd`)",
                 io::ErrorKind::PermissionDenied => {
                     " (your user needs to be in the service group: see docs/install.md)"
                 }

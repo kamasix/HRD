@@ -6,13 +6,13 @@ to fit 107 bytes), labels, a note, an optional group, an optional resource mode.
 Nothing is created at Roblox. There is no account generation.
 
 ```
-cordialctl account add alt-01 --label batch1 --group g01
-cordialctl account login alt-01          # you type the password
-cordialctl account list
-cordialctl account logout alt-01         # erase the stored session
-cordialctl account remove alt-01         # asks you to type the name
-cordialctl account export --file accounts.json     # names, labels, groups: no secrets
-cordialctl account import accounts.json
+hrdctl account add alt-01 --label batch1 --group g01
+hrdctl account login alt-01          # you type the password
+hrdctl account list
+hrdctl account logout alt-01         # erase the stored session
+hrdctl account remove alt-01         # asks you to type the name
+hrdctl account export --file accounts.json     # names, labels, groups: no secrets
+hrdctl account import accounts.json
 ```
 
 ## Where a session lives
@@ -28,7 +28,7 @@ disk (upstream measured this). So the manager:
 * points every client at that bus and sets `CORDIAL_SECRET_STORE=keyring`, which
   refuses the plain-file fallback and saves nothing rather than fall back;
 * has you unlock it with a passphrase after every reboot
-  (`cordialctl secrets unlock`, `--create` the first time). The passphrase goes to
+  (`hrdctl secrets unlock`, `--create` the first time). The passphrase goes to
   the keyring on its standard input, is not in any argument, is not written
   anywhere, and the keyring file is encrypted with it. **Nothing on disk holds the
   key.** Forget it and the stored sessions are unreadable; accounts sign in again;
@@ -64,7 +64,7 @@ signed in again automatically.
 
 Sign-in is upstream's own Lua screen inside the client; Cordial has no function
 that drives it. Passwords, codes, and any puzzle or confirmation are yours to
-provide. `cordialctl account login NAME`:
+provide. `hrdctl account login NAME`:
 
 1. queues a special **sign-in client** for the account through the account's
    group network (a login from another address than the client will play from is

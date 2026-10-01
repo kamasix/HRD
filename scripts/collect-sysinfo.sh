@@ -1,5 +1,5 @@
 #!/bin/sh
-# Read-only inventory of a Debian host for checking Cordial HRD compatibility.
+# Read-only inventory of a Debian host for checking HRD compatibility.
 # Changes nothing, needs no root (a few lines say "needs root" and are skipped),
 # prints no passwords, keys, tokens, environment variables or IP addresses.
 # Usage:  sh collect-sysinfo.sh > sysinfo.txt 2>&1     then paste sysinfo.txt.
@@ -80,10 +80,10 @@ for p in cargo rustc gcc cc make cmake git curl dpkg-deb fakeroot musl-gcc; do
   if have $p; then printf '%s: %s\n' "$p" "$($p --version 2>&1 | head -1)"; else printf '%s: MISSING\n' "$p"; fi
 done
 
-sec "Installed Cordial HRD (if any)"
-dpkg -l 'cordial*' 2>/dev/null | awk '/^ii/ {print $2, $3}'
-have cordialctl && run cordialctl --version
-have cordialctl && run cordialctl doctor
-have systemctl && run systemctl is-active cordiald cordial-netd cordial-panel
+sec "Installed HRD (if any)"
+dpkg -l 'hrd' 'hrd-client' 'cordial-hrd' 'cordial-hrd-client' 2>/dev/null | awk '/^ii/ {print $2, $3}'
+have hrdctl && run hrdctl --version
+have hrdctl && run hrdctl doctor
+have systemctl && run systemctl is-active hrdd hrd-netd hrd-panel
 
 sec "Done"

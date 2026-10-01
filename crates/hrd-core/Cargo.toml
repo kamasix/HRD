@@ -1,6 +1,6 @@
 [package]
 name = "hrd-core"
-description = "Shared types for the Cordial fleet manager: identifiers, layout, config, registry model, control protocol"
+description = "Shared types for HRD: identifiers, layout, config, registry model, control protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

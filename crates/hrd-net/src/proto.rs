@@ -1,4 +1,4 @@
-//! The wire between the unprivileged manager and `cordial-netd`.
+//! The wire between the unprivileged manager and `hrd-netd`.
 //!
 //! Same framing as the control protocol (one JSON object per line). The
 //! helper is root; the manager is not. **The manager can only name things**:

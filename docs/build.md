@@ -20,7 +20,7 @@ git submodule update --init --recursive
 scripts/fmt.sh -- --check                      # formats this workspace only, never the submodule
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-packaging/build-deb.sh [OUTDIR]                # -> cordial-hrd_<version>_<arch>.deb
+packaging/build-deb.sh [OUTDIR]                # -> hrd_<version>_<arch>.deb
 ```
 
 `scripts/fmt.sh` exists because `cargo fmt --all` also formats path
@@ -28,7 +28,7 @@ dependencies, which includes the upstream submodule.
 
 Only `hrd-import` pulls upstream code (`cordial-update`, by path, for APK
 inspection and signature verification). Everything else is this project's own
-crates. `cordial-enter` is built for a musl target so it is static.
+crates. `hrd-enter` is built for a musl target so it is static.
 
 ### Reproducibility
 
@@ -65,7 +65,7 @@ is never edited:
 ```
 patches/cordial/apply.sh /path/to/patched-copy      # copies, then applies patches/cordial/series
 cd /path/to/patched-copy && cargo build --release --locked -p cordial-runtime --bin cordial-run
-packaging/build-client.sh [OUTDIR]                  # does both, then -> cordial-hrd-client_<version>_<arch>.deb
+packaging/build-client.sh [OUTDIR]                  # does both, then -> hrd-client_<version>_<arch>.deb
 ```
 
 The patches (each a few dozen lines, each with a rationale in its header):

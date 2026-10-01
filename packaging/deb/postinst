@@ -2,25 +2,36 @@
 set -e
 case "$1" in
 configure)
-    systemd-sysusers /usr/lib/sysusers.d/cordial-hrd.conf
-    systemd-tmpfiles --create /usr/lib/tmpfiles.d/cordial-hrd.conf
+    systemd-sysusers /usr/lib/sysusers.d/hrd.conf
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/hrd.conf
     # The entry wrapper is the only program with a file capability, and only the
     # service group may run it.
-    chown root:cordial /usr/lib/cordial-hrd/cordial-enter
-    chmod 0750 /usr/lib/cordial-hrd/cordial-enter
-    setcap cap_sys_admin+ep /usr/lib/cordial-hrd/cordial-enter
+    chown root:cordial /usr/lib/hrd/hrd-enter
+    chmod 0750 /usr/lib/hrd/hrd-enter
+    setcap cap_sys_admin+ep /usr/lib/hrd/hrd-enter
     # A machine with a GPU: let the service user open the render node.
     if ls /dev/dri/renderD* >/dev/null 2>&1 && getent group render >/dev/null; then
         adduser --quiet cordial render || true
     fi
+    # This package replaces `cordial-hrd`. Its unit files are gone, but a unit
+    # that was enabled left a link behind; remove only links that now dangle.
+    for u in cordiald cordial-netd cordial-panel; do
+        l=/etc/systemd/system/multi-user.target.wants/$u.service
+        if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; fi
+    done
     systemctl daemon-reload >/dev/null 2>&1 || true
+    # The configuration file used to be called cordiald.toml; it is still read
+    # while there is no hrdd.toml, so nothing is lost. Say so once.
+    if [ -f /etc/cordial-hrd/cordiald.toml ] && [ ! -f /etc/cordial-hrd/hrdd.toml ]; then
+        echo "hrd: keeping your existing /etc/cordial-hrd/cordiald.toml (rename it to hrdd.toml when convenient)."
+    fi
     cat <<MSG
-cordial-hrd is installed. Nothing has been started or changed.
-  1. sudo cordialctl init            (writes /etc/cordial-hrd/cordiald.toml, checks the machine)
-  2. sudo systemctl enable --now cordial-netd cordiald
-  3. cordialctl secrets unlock --create
-  4. cordialctl runtime import --apk /path/to/roblox.apk
-See /usr/share/doc/cordial-hrd/install.md
+hrd is installed. Nothing has been started or changed.
+  1. sudo hrdctl init            (writes /etc/cordial-hrd/hrdd.toml, checks the machine)
+  2. sudo systemctl enable --now hrd-netd hrdd
+  3. hrdctl secrets unlock --create
+  4. hrdctl runtime import --apk /path/to/roblox.apk
+See /usr/share/doc/hrd/install.md
 MSG
     ;;
 esac

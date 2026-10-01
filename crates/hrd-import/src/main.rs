@@ -1,6 +1,6 @@
-//! `cordial-import`: put a Roblox Android build into the runtime store.
+//! `hrd-import`: put a Roblox Android build into the runtime store.
 //!
-//! Normally run by `cordiald` with the operator's APKs passed as inherited file
+//! Normally run by `hrdd` with the operator's APKs passed as inherited file
 //! descriptors (`--fd`), so that it reads exactly the files the operator opened.
 //! It can also be run by hand as the service user with `--path`.
 
@@ -16,14 +16,14 @@ use hrd_import::store::Store;
 
 const USAGE: &str = "\
 usage:
-  cordial-import import --store DIR (--path FILE-OR-DIR | --fd N[:NAME])... [--label TEXT]
+  hrd-import import --store DIR (--path FILE-OR-DIR | --fd N[:NAME])... [--label TEXT]
                         [--make-current] [--trust-sha256 HEX]... [--json]
-  cordial-import list   --store DIR [--json]
-  cordial-import use    --store DIR VERSION
-  cordial-import remove --store DIR VERSION [--in-use VERSION]...
-  cordial-import verify --store DIR [VERSION] [--json]
-  cordial-import fetch  --into DIR [--version NAME] [--list]
-  cordial-import fetch  --check --store DIR   (is the mirror's newest build newer than the current one?)
+  hrd-import list   --store DIR [--json]
+  hrd-import use    --store DIR VERSION
+  hrd-import remove --store DIR VERSION [--in-use VERSION]...
+  hrd-import verify --store DIR [VERSION] [--json]
+  hrd-import fetch  --into DIR [--version NAME] [--list]
+  hrd-import fetch  --check --store DIR   (is the mirror's newest build newer than the current one?)
 
 `fetch` downloads the x86-64 Roblox build from the mirror upstream Cordial uses
 (APKPure) into DIR and checks each file against Roblox's pinned signing

@@ -6,22 +6,22 @@ field that is remembered in your browser, and "Zatrzymaj wszystko". **Ustawienia
 (settings): Roblox (installed versions, automatic updates, check now, install from
 APK files), the secret store, groups and networks, and an advanced section with
 the doctor and every daemon setting. The page is in Polish. Everything it does is
-also a `cordialctl` command (see operations.md).
+also a `hrdctl` command (see operations.md).
 
-The panel lets you do from a browser what `cordialctl` does: fleet status and
+The panel lets you do from a browser what `hrdctl` does: fleet status and
 statistics, accounts and the sign-in screen, groups, networks (listing, applying; defining a WireGuard
-network needs root and is done with `sudo cordialctl network add`), the Roblox runtime (including uploading an APK),
+network needs root and is done with `sudo hrdctl network add`), the Roblox runtime (including uploading an APK),
 settings, the secret store, and the doctor. It is **off until you set it up**, is
-a separate program (`cordial-panel`) and a separate service, and has no authority
+a separate program (`hrd-panel`) and a separate service, and has no authority
 beyond what the control socket gives any member of the service group: it is a
 client of that socket, as the same unprivileged user. It cannot define a WireGuard
-network (that needs root: `sudo cordialctl network add`), cannot change the
+network (that needs root: `sudo hrdctl network add`), cannot change the
 protected settings (see security.md) and needs the file-based token to log in.
 
 ## Set it up
 
 ```
-sudo -u cordial cordial-panel init --listen 10.66.0.2 --san 203.0.113.5
+sudo -u cordial hrd-panel init --listen 10.66.0.2 --san 203.0.113.5
 ```
 
 * `--listen` is where it listens. `127.0.0.1` = this machine only (reach it with
@@ -32,13 +32,13 @@ sudo -u cordial cordial-panel init --listen 10.66.0.2 --san 203.0.113.5
 * `--san` adds names or addresses to the certificate (the VPS's public address if
   you will open it there).
 * It prints, once: the URL, a **login token** (256 random bits; only its SHA-256
-  is stored) and the certificate's SHA-256 fingerprint. `cordial-panel show`
-  prints the URL and fingerprint again; `cordial-panel reset-token` makes a new
+  is stored) and the certificate's SHA-256 fingerprint. `hrd-panel show`
+  prints the URL and fingerprint again; `hrd-panel reset-token` makes a new
   token; the running panel adopts it at the next login attempt and ends every
   session opened with the old one.
 
 ```
-sudo systemctl enable --now cordial-panel
+sudo systemctl enable --now hrd-panel
 ```
 
 Open the URL. The certificate is self-signed, so the browser warns; compare its
@@ -49,7 +49,7 @@ fingerprint with the one `init` printed before accepting. Enter the token.
 The home server cannot take inbound connections, so a browser at
 `https://<VPS address>:<port>/` reaches it through the VPS: the gateway forwards
 that port over a management WireGuard tunnel to the address the panel listens on.
-`cordialctl gateway plan ... --panel-target <home address on the tunnel>
+`hrdctl gateway plan ... --panel-target <home address on the tunnel>
 --panel-port <port> --panel-allow <your network> --panel-mgmt-key <key>` writes
 those rules ([gateway.md](gateway.md)); the allow-list is mandatory, and nothing
 is applied for you.

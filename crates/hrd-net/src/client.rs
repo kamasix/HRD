@@ -1,4 +1,4 @@
-//! Talking to `cordial-netd` from the unprivileged side.
+//! Talking to `hrd-netd` from the unprivileged side.
 //!
 //! One connection per call. The helper is restarted independently of the
 //! manager (an upgrade, a crash), and a connection that outlives it would fail
@@ -46,7 +46,7 @@ impl NetdClient {
         let stream = UnixStream::connect(&self.path).map_err(|e| {
             let hint = match e.kind() {
                 std::io::ErrorKind::NotFound => {
-                    " (is cordial-netd running? `systemctl status cordial-netd`)"
+                    " (is hrd-netd running? `systemctl status hrd-netd`)"
                 }
                 std::io::ErrorKind::PermissionDenied => {
                     " (your user needs to be in the service group)"

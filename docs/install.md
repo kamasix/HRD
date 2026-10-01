@@ -3,17 +3,46 @@
 Target: **Debian 13 (trixie), amd64**, used over SSH, no desktop. Debian 12 and
 arm64 build but are not the tested target.
 
+## Names on disk
+
+The programs and services are called `hrdd`, `hrdctl`, `hrd-panel`, `hrd-netd`,
+`hrd-enter`, `hrd-import`. The directories and the service user keep the names
+they had before the project was called HRD: `/etc/cordial-hrd`,
+`/var/lib/cordial-hrd`, `/var/lib/cordial-hrd-netd`, `/var/log/cordial-hrd`,
+`/run/cordial-hrd`, `/run/cordial-hrd-netns`, user and group `cordial`. This is
+deliberate. The client files every saved sign-in under the **full path of the
+profile directory** (`/var/lib/cordial-hrd/acct/<account>/...`), so renaming that
+directory would sign every account out, and each would have to be signed in again
+by hand.
+
+### Upgrading from the package called `cordial-hrd`
+
+`hrd` replaces `cordial-hrd` and `hrd-client` replaces `cordial-hrd-client`
+(`apt` removes the old packages when the new ones are installed). Accounts,
+sessions, networks and settings stay where they are. What changes:
+
+* the commands and units: `cordialctl` → `hrdctl`, `cordiald` → `hrdd`,
+  `cordial-netd` → `hrd-netd`, `cordial-panel` → `hrd-panel`; enable the new units
+  (`sudo systemctl enable --now hrd-netd hrdd`, and `hrd-panel` if you use it);
+* `/etc/cordial-hrd/cordiald.toml` keeps working under its old name until you
+  rename it to `hrdd.toml`; program paths that an older `init` wrote into it are
+  read as the new defaults;
+* running clients are **not** carried over to the new daemon: stop them first
+  (`cordialctl stop-all`);
+* the old package's removal tears down the applied network namespaces; run
+  `hrdctl network apply` again.
+
 ## 1. Packages
 
 The manager package and the client package are separate because the client needs
 the GTK stack and is built from a different source tree ([build.md](build.md)).
 
 ```
-sudo apt install ./cordial-hrd_<version>_amd64.deb ./cordial-hrd-client_<version>_amd64.deb
+sudo apt install ./hrd_<version>_amd64.deb ./hrd-client_<version>_amd64.deb
 sudo apt install cage mesa-vulkan-drivers        # the nested compositor; CPU Vulkan for servers without a GPU
 ```
 
-`cordial-hrd` depends on systemd, iproute2, nftables, wireguard-tools, dbus-daemon,
+`hrd` depends on systemd, iproute2, nftables, wireguard-tools, dbus-daemon,
 gnome-keyring, libcap2-bin. **Installing starts nothing**: no service, no client,
 no network change; the post-install message lists the next steps. No Fedora
 package names are used.
@@ -26,18 +55,18 @@ pull in; the client package computes exact dependencies with `dpkg-shlibdeps`.
 ## 2. First start
 
 ```
-sudo cordialctl init                                  # config skeleton, checks, nothing started
-sudo systemctl enable --now cordial-netd cordiald
-sudo adduser "$USER" cordial                          # to use cordialctl without sudo (log in again)
-cordialctl doctor                                     # read every FAIL
-cordialctl secrets unlock --create                    # new passphrase, 12+ characters
+sudo hrdctl init                                  # config skeleton, checks, nothing started
+sudo systemctl enable --now hrd-netd hrdd
+sudo adduser "$USER" cordial                          # to use hrdctl without sudo (log in again)
+hrdctl doctor                                     # read every FAIL
+hrdctl secrets unlock --create                    # new passphrase, 12+ characters
 ```
 
-Edit `/etc/cordial-hrd/cordiald.toml` (annotated example in
-`/usr/share/doc/cordial-hrd/cordiald.toml.example`); `cordiald --check-config`
-validates it. Settings can also be changed at run time with `cordialctl config set`.
+Edit `/etc/cordial-hrd/hrdd.toml` (annotated example in
+`/usr/share/doc/hrd/hrdd.toml.example`); `hrdd --check-config`
+validates it. Settings can also be changed at run time with `hrdctl config set`.
 
-After every **reboot** the keyring is locked: `cordialctl secrets unlock`. Clients
+After every **reboot** the keyring is locked: `hrdctl secrets unlock`. Clients
 cannot start until you do.
 
 ## 3. The Roblox build
@@ -45,19 +74,19 @@ cannot start until you do.
 The easy way, on the server itself:
 
 ```
-cordialctl runtime fetch --list      # versions the mirror has for x86-64
-cordialctl runtime fetch             # newest; or --version NAME
-cordialctl runtime list
+hrdctl runtime fetch --list      # versions the mirror has for x86-64
+hrdctl runtime fetch             # newest; or --version NAME
+hrdctl runtime list
 ```
 
-Keep it current: `cordialctl config set runtime.auto_update true` (or the toggle in the
+Keep it current: `hrdctl config set runtime.auto_update true` (or the toggle in the
 panel's Ustawienia > Roblox). Every `runtime.check_interval_h` hours (default 6) the
 daemon asks the mirror for the newest x86-64 build and, if it is newer than the
 newest installed one, downloads, verifies and installs it and selects it for
-clients started afterwards; running clients are never touched. `cordialctl runtime
+clients started afterwards; running clients are never touched. `hrdctl runtime
 update [--now]` shows the state or checks at once. It is off by default because it
 makes the daemon send network requests. If a new build misbehaves,
-`cordialctl runtime use OLDER_VERSION` goes back.
+`hrdctl runtime use OLDER_VERSION` goes back.
 
 This runs upstream Cordial's own downloader (mirror: APKPure, x86-64 only), checks
 every file against Roblox's pinned signing certificate, then installs it with the
@@ -70,8 +99,8 @@ Or get the Android build yourself (base APK, and
 for a split build the engine split for your CPU):
 
 ```
-cordialctl runtime import --apk ~/roblox/      # a directory of APKs, or several --apk PATH
-cordialctl runtime list
+hrdctl runtime import --apk ~/roblox/      # a directory of APKs, or several --apk PATH
+hrdctl runtime list
 ```
 
 The importer stages private copies, checks every archive is one consistent build
@@ -87,13 +116,13 @@ read once, installed once, and used by every client as unchanging files.
 ## 4. Accounts, network, go
 
 ```
-cordialctl account add alt-01 ; cordialctl account login alt-01
-sudo cordialctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
-cordialctl group create g01 --network de-1 --capacity 20
-cordialctl group assign g01 --accounts g01.txt
-cordialctl network plan && cordialctl network apply
-cordialctl group start g01 --place-id 1234567890
-cordialctl status ; cordialctl stats ; cordialctl tui
+hrdctl account add alt-01 ; hrdctl account login alt-01
+sudo hrdctl network add de-1 --wireguard-config de-1.conf --exit-ip 203.0.113.11
+hrdctl group create g01 --network de-1 --capacity 20
+hrdctl group assign g01 --accounts g01.txt
+hrdctl network plan && hrdctl network apply
+hrdctl group start g01 --place-id 1234567890
+hrdctl status ; hrdctl stats ; hrdctl tui
 ```
 
 Place ids, account names and addresses are yours; none is built in. See
@@ -102,17 +131,17 @@ Place ids, account names and addresses are yours; none is built in. See
 ## Updating
 
 Install the new `.deb`. The daemon is not restarted by the upgrade's file copy;
-`sudo systemctl restart cordiald` does it, and **running clients keep running**
+`sudo systemctl restart hrdd` does it, and **running clients keep running**
 (the service is `KillMode=process`; the new daemon adopts them and re-derives
-their state from their logs). Protocol mismatches between `cordialctl` and
-`cordiald` are reported, not guessed around.
+their state from their logs). Protocol mismatches between `hrdctl` and
+`hrdd` are reported, not guessed around.
 
 ## Removing
 
 ```
-cordialctl stop-all
-sudo apt remove cordial-hrd          # keeps /var/lib/cordial-hrd (accounts, keyring) and /etc/cordial-hrd
-sudo apt purge cordial-hrd           # deletes them, including stored sessions and WireGuard keys
+hrdctl stop-all
+sudo apt remove hrd          # keeps /var/lib/cordial-hrd (accounts, keyring) and /etc/cordial-hrd
+sudo apt purge hrd           # deletes them, including stored sessions and WireGuard keys
 ```
 
 Removal releases this project's network namespaces (and with them the tunnels and
@@ -121,8 +150,8 @@ firewall tables inside) and touches nothing else. To undo the gateway, follow th
 
 ## Example: a 4-core, 16 GB machine with an Intel iGPU (i5-6400T)
 
-Not measured; a starting point. Put it in `/etc/cordial-hrd/cordiald.toml` and
-raise the numbers only after watching `cordialctl stats`:
+Not measured; a starting point. Put it in `/etc/cordial-hrd/hrdd.toml` and
+raise the numbers only after watching `hrdctl stats`:
 
 ```toml
 [scheduler]
@@ -138,15 +167,15 @@ cpus_per_instance = 1
 
 `scripts/bootstrap-debian.sh` automates building and installing on Debian 13.
 
-## Troubleshooting: `cordiald` fails to restart ("Device or resource busy")
+## Troubleshooting: `hrdd` fails to restart ("Device or resource busy")
 
-Seen in `journalctl -u cordiald` as `Failed to spawn 'start' task: Device or
+Seen in `journalctl -u hrdd` as `Failed to spawn 'start' task: Device or
 resource busy`. Cause: the service cgroup had delegated controllers enabled for
 the clients and, after a restart that left the keyring/bus running
 (`KillMode=process`), systemd tried to put the new daemon into that same cgroup.
 Fixed by `DelegateSubgroup=manager` in the unit (package 0.1.0 built after this
 note; needs systemd 254, Debian 13 has 257). On a machine stuck in the old state,
-install the fixed package, then `sudo systemctl stop cordiald`,
+install the fixed package, then `sudo systemctl stop hrdd`,
 `sudo pkill -u cordial -f 'gnome-keyring-daemon|dbus-daemon'`,
-`sudo systemctl daemon-reload && sudo systemctl start cordiald`, and
-`cordialctl secrets unlock` (killing the keyring locks it).
+`sudo systemctl daemon-reload && sudo systemctl start hrdd`, and
+`hrdctl secrets unlock` (killing the keyring locks it).
