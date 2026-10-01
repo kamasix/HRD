@@ -128,3 +128,16 @@ cpus_per_instance = 1
 ```
 
 `scripts/bootstrap-debian.sh` automates building and installing on Debian 13.
+
+## Troubleshooting: `cordiald` fails to restart ("Device or resource busy")
+
+Seen in `journalctl -u cordiald` as `Failed to spawn 'start' task: Device or
+resource busy`. Cause: the service cgroup had delegated controllers enabled for
+the clients and, after a restart that left the keyring/bus running
+(`KillMode=process`), systemd tried to put the new daemon into that same cgroup.
+Fixed by `DelegateSubgroup=manager` in the unit (package 0.1.0 built after this
+note; needs systemd 254, Debian 13 has 257). On a machine stuck in the old state,
+install the fixed package, then `sudo systemctl stop cordiald`,
+`sudo pkill -u cordial -f 'gnome-keyring-daemon|dbus-daemon'`,
+`sudo systemctl daemon-reload && sudo systemctl start cordiald`, and
+`cordialctl secrets unlock` (killing the keyring locks it).

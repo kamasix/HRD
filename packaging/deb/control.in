@@ -3,7 +3,7 @@ Version: @VERSION@
 Architecture: @ARCH@
 Maintainer: cordial-hrd local build <root@localhost>
 Installed-Size: @SIZE@
-Depends: systemd (>= 252), iproute2, nftables, wireguard-tools, dbus-daemon, gnome-keyring, libcap2-bin, @SHLIBS@
+Depends: systemd (>= 254), iproute2, nftables, wireguard-tools, dbus-daemon, gnome-keyring, libcap2-bin, @SHLIBS@
 Recommends: cordial-hrd-client
 Suggests: cage, mesa-vulkan-drivers
 Section: admin

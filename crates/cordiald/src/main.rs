@@ -136,7 +136,16 @@ fn run(args: Args, layout: Layout) -> Result<()> {
 
     // Process ownership.
     let mut notes = Vec::new();
-    let deleg = match cgroup::own() {
+    // Under the packaged unit (`DelegateSubgroup=manager`) systemd has already put
+    // this process in `<service>/manager`; the delegated subtree is the parent.
+    let own = cgroup::own().map(|c| {
+        if c.path().file_name().is_some_and(|n| n == "manager") {
+            c.parent().unwrap_or(c)
+        } else {
+            c
+        }
+    });
+    let deleg = match own {
         Some(base) => match cgroup::prepare_delegated(&base, std::process::id()) {
             Ok(d) => Some(d),
             Err(e) => {

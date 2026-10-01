@@ -21,6 +21,12 @@ TimeoutStopSec=60
 # The daemon gives each client its own cgroup below its own, and ends a client by
 # emptying that cgroup, so it needs the subtree delegated to it.
 Delegate=yes
+# systemd puts the daemon (and the helpers it starts) in the `manager` sub-cgroup
+# from the start. Without this the daemon sits in the service cgroup itself and
+# then enables controllers on it for the clients' cgroups; the kernel forbids a
+# cgroup that hands out controllers from also holding processes, so the NEXT start
+# (after `systemctl restart`) fails with "Device or resource busy". Needs systemd 254.
+DelegateSubgroup=manager
 
 # 300 clients of ~70 threads each is far above the default 15% task limit.
 TasksMax=infinity

@@ -102,6 +102,11 @@ impl Cgroup {
         Cgroup { dir }
     }
 
+    /// The cgroup this one is a child of, if the path has a parent.
+    pub fn parent(&self) -> Option<Cgroup> {
+        self.dir.parent().map(|p| Cgroup::at(p.to_path_buf()))
+    }
+
     pub fn path(&self) -> &Path {
         &self.dir
     }
