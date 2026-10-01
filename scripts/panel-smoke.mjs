@@ -81,7 +81,7 @@ await page.waitForSelector('.menu', { state: 'detached' });
 // Take one out of its group and put it back.
 await card.locator('.acct', { hasText: accB }).locator('button[aria-label^="Więcej"]').click();
 await page.click('.menu >> text=Wyjmij z grupy');
-await page.waitForSelector('.loose:not([hidden])');
+await page.waitForSelector(`.loose .acct .name:text("${accB}")`); // other accounts may be loose already
 check((await page.locator('.loose .acct', { hasText: accB }).count()) === 1, 'the account is listed under "Bez grupy"');
 await page.locator('.loose .acct', { hasText: accB }).locator('button:has-text("Przypisz")').click();
 await page.selectOption('.modal select', proxyGroup);
