@@ -36,6 +36,14 @@ pub fn members(live: &Live) -> Vec<u32> {
     let Some(p) = &live.rec.process else {
         return Vec::new();
     };
+    pgid_members(p)
+}
+
+/// Members of a set that has no cgroup: the leader if it is the same process,
+/// and every live process in the recorded process group that started after the
+/// leader (so a process group id reused later by something unrelated, which
+/// started earlier, is not mistaken for ours).
+pub fn pgid_members(p: &hrd_core::model::ProcessIdent) -> Vec<u32> {
     let Some(pgid) = p.pgid else {
         return if procfs::is_same_process(p.pid, p.start_ticks) {
             vec![p.pid]
@@ -267,6 +275,41 @@ fn open_log(d: &Daemon, id: &AccountName, run: u64) -> Result<std::fs::File> {
         hrd_core::time::rfc3339(now_unix())
     );
     Ok(f)
+}
+
+/// Keep a running client's log from growing without bound: past `logs.max_bytes`
+/// it is copied to `.1` and truncated in place. The client writes with
+/// `O_APPEND`, so it carries on at the new end; the supervisor's reader notices
+/// the file got shorter and starts again. Called right after the log was read,
+/// so what is lost is at most the few bytes written between that read and the
+/// truncate. A line naming the run is written first so a restarted daemon can
+/// still find where the run's lines begin.
+pub fn rotate_running_log(d: &Daemon, id: &AccountName, run: u64, max: u64) {
+    let path = d.layout.instance_log(id);
+    let Ok(md) = std::fs::metadata(&path) else {
+        return;
+    };
+    if max == 0 || md.len() <= max {
+        return;
+    }
+    let old = path.with_extension("log.1");
+    if std::fs::copy(&path, &old).is_err() {
+        return;
+    }
+    let _ = std::fs::set_permissions(&old, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+    let Ok(f) = OpenOptions::new().write(true).open(&path) else {
+        return;
+    };
+    if f.set_len(0).is_err() {
+        return;
+    }
+    if let Ok(mut a) = OpenOptions::new().append(true).open(&path) {
+        let _ = writeln!(
+            a,
+            "=== hrd run {run} start (log rotated {}) ===",
+            hrd_core::time::rfc3339(now_unix())
+        );
+    }
 }
 
 pub fn engine_log_dir(d: &Daemon, id: &AccountName) -> PathBuf {

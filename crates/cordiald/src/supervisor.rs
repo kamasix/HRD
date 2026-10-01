@@ -21,6 +21,9 @@ use crate::state::{Daemon, Inner};
 use crate::{netops, runs, sampler, signals};
 
 const LOG_BYTES_PER_TICK: u64 = 256 * 1024;
+/// Read limit when nothing may be skipped: before a verdict, and after the
+/// leader has exited.
+const DRAIN_BYTES: u64 = 8 * 1024 * 1024;
 
 fn timing(cfg: &Config) -> Timing {
     Timing {
@@ -70,6 +73,14 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
 
         // What the client says.
         if deciding {
+            // While the decisive lines have not been seen yet (starting, joining,
+            // unknown) nothing may be skipped; once connected, only the newest
+            // lines matter and a chatty engine is allowed to push old ones out.
+            let cap = if live.rec.state == State::Connected {
+                LOG_BYTES_PER_TICK
+            } else {
+                DRAIN_BYTES
+            };
             let mut lines = Vec::new();
             let dir = runs::engine_log_dir(d, id);
             if let Some(tail) = live.engine_tail.as_mut() {
@@ -78,13 +89,13 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
                         tail.set_path(p);
                     }
                 }
-                lines.extend(tail.poll(LOG_BYTES_PER_TICK));
+                lines.extend(tail.poll(cap));
             }
             // Engine lines first: a disconnect notice in the engine log normally
             // comes before the rejoin the process log reports, and applying them
             // in that order lets the rejoin cancel the notice.
             if let Some(tail) = live.proc_tail.as_mut() {
-                lines.extend(tail.poll(LOG_BYTES_PER_TICK));
+                lines.extend(tail.poll(cap));
             }
             for line in lines {
                 if let Some(sig) = signals::parse_line(&line) {
@@ -92,6 +103,10 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
                 }
             }
             fx.extend(machine::on_tick(&mut live.rec, &mut live.tr, &t, now));
+        }
+
+        if live.has_process() {
+            runs::rotate_running_log(d, id, live.rec.run, cfg.logs.max_bytes);
         }
 
         // What starting costs, for the next admission decision.
@@ -132,6 +147,23 @@ fn service(d: &Daemon, inner: &mut Inner, cfg: &Config, id: &AccountName, now: u
             if let Some(mut exit) = runs::main_exit(live) {
                 if let (Some(cg), Some(base)) = (&live.cg, live.oom_base) {
                     exit.oom_killed = cg.memory().oom_kill.is_some_and(|n| n > base);
+                }
+                // Whatever the client wrote last is read before the exit is
+                // classified: a crash right after "joined" is a disconnect, not
+                // a failure to start.
+                if live.rec.state.expects_processes() {
+                    let mut last = Vec::new();
+                    if let Some(t) = live.engine_tail.as_mut() {
+                        last.extend(t.poll(DRAIN_BYTES));
+                    }
+                    if let Some(t) = live.proc_tail.as_mut() {
+                        last.extend(t.poll(DRAIN_BYTES));
+                    }
+                    for line in last {
+                        if let Some(sig) = signals::parse_line(&line) {
+                            fx.extend(machine::on_signal(&mut live.rec, &mut live.tr, sig, now));
+                        }
+                    }
                 }
                 let from = live.rec.state;
                 machine::on_exit(&mut live.rec, &live.tr, exit, now);

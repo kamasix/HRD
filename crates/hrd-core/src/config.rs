@@ -356,7 +356,7 @@ impl Default for NetworkCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LogsCfg {
-    /// Size above which an instance log is moved to `.1` at the start of the next run (not during a run).
+    /// Size above which an instance log is copied to `.1` and truncated (also during a run), or moved to `.1` at the next start.
     pub max_bytes: u64,
 }
 

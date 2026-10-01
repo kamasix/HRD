@@ -182,6 +182,14 @@ pub enum Effect {
     Restart,
 }
 
+/// Sections whose changes are applied to the running daemon.
+pub fn is_live_section(sec: &str) -> bool {
+    matches!(
+        sec,
+        "scheduler" | "stats" | "network" | "logs" | "login" | "resources" | "engine"
+    )
+}
+
 /// When a change to `key` takes hold.
 pub fn effect_of(key: &str) -> Effect {
     match key.split('.').next().unwrap_or("") {

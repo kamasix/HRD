@@ -51,16 +51,9 @@ fixed where stated in the commit log. These were **understood and not fixed**:
 
 * Some work still happens with the daemon's lock held (asset-tree copy, cgroup
   creation, `fsync` of state files); a slow disk delays control requests.
-* Client logs are rotated only when the next run of an account starts; a very
-  chatty run grows its log during the run. The adoption replay looks at the last
-  8 MiB, so after a restart an old banner can be missed (state becomes `unknown`).
-* The log reader reads at most 256 KiB per 0.5 s tick per log and skips the oldest
-  bytes beyond that; a very noisy engine could push the decisive line out of view.
-* With the process-group fallback (no cgroup delegation) ownership is weaker:
-  orphans of a dead leader are not tracked, and a client that calls `setsid` is
-  not found. Use the packaged unit (`Delegate=yes`).
-* `config set` re-reads the configuration file, so it also applies unrelated
-  edits made to that file since the daemon started.
+* With the process-group fallback (no cgroup delegation) ownership is weaker: a
+  client that calls `setsid` leaves the group and is not found. Orphans left in
+  the group by a dead leader are tracked. Use the packaged unit (`Delegate=yes`).
 * A sign-in run is stopped at the first signed-in screen; whether the client has
   finished writing its session by then is unverified.
 * `cordial-enter` does not check the caller against the group assignment (see

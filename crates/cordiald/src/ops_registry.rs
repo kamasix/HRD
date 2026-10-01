@@ -692,6 +692,10 @@ pub fn config_set(d: &Daemon, changes: Vec<ConfigChange>) -> Result<Value> {
     if changes.is_empty() || changes.len() > 64 {
         return Err(Error::invalid("give between 1 and 64 changes"));
     }
+    // One change at a time: two concurrent calls would each start from the same
+    // overrides file and the second would lose the first's changes.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let mut over = effective::load_overrides(&d.layout)?;
     let mut applied = ConfigApplied {
         live: vec![],
@@ -722,6 +726,22 @@ pub fn config_set(d: &Daemon, changes: Vec<ConfigChange>) -> Result<Value> {
         }
     };
     let cfg = effective::build(base, &over)?;
+    // Only the sections that take effect without a restart are swapped in. The
+    // others keep the values the daemon started with, so editing the file by
+    // hand and then running `config set` does not silently apply those edits.
+    let cfg = {
+        let mut next = serde_json::to_value(&cfg).map_err(|e| Error::Internal(e.to_string()))?;
+        let cur = serde_json::to_value(&*d.cfg()).map_err(|e| Error::Internal(e.to_string()))?;
+        if let (Some(n), Some(c)) = (next.as_object_mut(), cur.as_object()) {
+            for (k, v) in c {
+                if !effective::is_live_section(k) {
+                    n.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        serde_json::from_value::<hrd_core::config::Config>(next)
+            .map_err(|e| Error::Internal(e.to_string()))?
+    };
     fsutil::write_json_atomic(&effective::overrides_file(&d.layout), &over, 0o600)?;
     *d.cfg.write().unwrap_or_else(|e| e.into_inner()) = std::sync::Arc::new(cfg);
     to(&applied)

@@ -36,7 +36,9 @@ fn alive(rec: &InstanceRecord) -> (bool, Option<Cgroup>) {
     let populated = cg
         .as_ref()
         .is_some_and(|c| matches!(c.populated(), Ok(true)));
-    (main || populated, cg)
+    // Without a cgroup, orphans of a dead leader are still in its process group.
+    let orphans = cg.is_none() && p.pgid.is_some() && !runs::pgid_members(p).is_empty();
+    (main || populated || orphans, cg)
 }
 
 pub fn adopt_all(d: &Daemon, inner: &mut Inner) {
