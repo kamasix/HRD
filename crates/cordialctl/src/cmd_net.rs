@@ -47,55 +47,122 @@ fn apks_in(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+fn import_apks(
+    ctx: &Ctx,
+    apk: &[PathBuf],
+    label: Option<String>,
+    keep_current: bool,
+) -> Result<()> {
+    let paths = apks_in(apk)?;
+    // The operator opens the files; the daemon's importer reads exactly
+    // those descriptors, whatever their permissions or paths.
+    let files: Vec<std::fs::File> = paths
+        .iter()
+        .map(|p| std::fs::File::open(p).map_err(|e| Error::io(format!("open {}", p.display()), e)))
+        .collect::<Result<_>>()?;
+    let meta: Vec<ImportFile> = paths
+        .iter()
+        .zip(&files)
+        .map(|(p, f)| ImportFile {
+            name: p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            size: f.metadata().map(|m| m.len()).unwrap_or(0),
+        })
+        .collect();
+    let fds: Vec<_> = files.iter().map(|f| f.as_fd()).collect();
+    ctx.out.line(format!(
+        "verifying and installing {} file(s); this reads every byte and can take a few minutes",
+        paths.len()
+    ));
+    let mut cl = hrd_core::wire::Client::connect(
+        &ctx.socket,
+        "cordialctl",
+        Some(Duration::from_secs(3600)),
+    )?;
+    let v: Value = cl.call_with_fds(
+        Request::RuntimeImport {
+            files: meta,
+            label,
+            make_current: !keep_current,
+        },
+        &fds,
+    )?;
+    if ctx.out.json {
+        ctx.out.value(&v);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    }
+    Ok(())
+}
+
+/// `cordial-import fetch` as the invoking user, into a private temporary
+/// directory that is removed afterwards.
+fn fetch_runtime(ctx: &Ctx, version: Option<String>, list: bool, keep_current: bool) -> Result<()> {
+    let importer = std::env::var("CORDIAL_IMPORTER")
+        .unwrap_or_else(|_| "/usr/lib/cordial-hrd/cordial-import".to_string());
+    if !Path::new(&importer).exists() {
+        return Err(Error::unavailable(format!("{importer} is not installed")));
+    }
+    if list {
+        let st = std::process::Command::new(&importer)
+            .args(["fetch", "--list"])
+            .status()
+            .map_err(|e| Error::io("run the importer", e))?;
+        return if st.success() {
+            Ok(())
+        } else {
+            Err(Error::unavailable(
+                "the mirror could not be reached or did not answer",
+            ))
+        };
+    }
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .ok_or_else(|| Error::unavailable("no HOME to download into"))?;
+    fsutil::ensure_private_dir(&base, 0o700)?;
+    let dir = base.join(format!("cordial-hrd-fetch-{}", std::process::id()));
+    let _ = fsutil::remove_dir_all_if_exists(&dir);
+    fsutil::ensure_private_dir(&dir, 0o700)?;
+    let result = (|| {
+        ctx.out
+            .line("downloading the Roblox build for x86-64; the file is about 150 MB");
+        let mut cmd = std::process::Command::new(&importer);
+        cmd.arg("fetch").arg("--into").arg(&dir);
+        if let Some(v) = &version {
+            cmd.arg("--version").arg(v);
+        }
+        let st = cmd.status().map_err(|e| Error::io("run the importer", e))?;
+        if !st.success() {
+            return Err(Error::unavailable(
+                "the download or the signature check failed (see above); nothing was installed",
+            ));
+        }
+        import_apks(
+            ctx,
+            std::slice::from_ref(&dir),
+            Some("fetched".into()),
+            keep_current,
+        )
+    })();
+    let _ = fsutil::remove_dir_all_if_exists(&dir);
+    result
+}
+
 pub fn runtime(ctx: &Ctx, c: RuntimeCmd) -> Result<()> {
     match c {
         RuntimeCmd::Import {
             apk,
             label,
             keep_current,
-        } => {
-            let paths = apks_in(&apk)?;
-            // The operator opens the files; the daemon's importer reads exactly
-            // those descriptors, whatever their permissions or paths.
-            let files: Vec<std::fs::File> = paths
-                .iter()
-                .map(|p| {
-                    std::fs::File::open(p)
-                        .map_err(|e| Error::io(format!("open {}", p.display()), e))
-                })
-                .collect::<Result<_>>()?;
-            let meta: Vec<ImportFile> = paths
-                .iter()
-                .zip(&files)
-                .map(|(p, f)| ImportFile {
-                    name: p
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                    size: f.metadata().map(|m| m.len()).unwrap_or(0),
-                })
-                .collect();
-            let fds: Vec<_> = files.iter().map(|f| f.as_fd()).collect();
-            ctx.out.line(format!("verifying and installing {} file(s); this reads every byte and can take a few minutes", paths.len()));
-            let mut cl = hrd_core::wire::Client::connect(
-                &ctx.socket,
-                "cordialctl",
-                Some(Duration::from_secs(3600)),
-            )?;
-            let v: Value = cl.call_with_fds(
-                Request::RuntimeImport {
-                    files: meta,
-                    label,
-                    make_current: !keep_current,
-                },
-                &fds,
-            )?;
-            if ctx.out.json {
-                ctx.out.value(&v);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
-            }
-        }
+        } => import_apks(ctx, &apk, label, keep_current)?,
+        RuntimeCmd::Fetch {
+            version,
+            list,
+            keep_current,
+        } => fetch_runtime(ctx, version, list, keep_current)?,
         RuntimeCmd::List => {
             let v: Value = ctx.client()?.call(Request::RuntimeList)?;
             if ctx.out.json {

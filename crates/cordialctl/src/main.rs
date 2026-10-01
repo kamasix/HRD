@@ -127,6 +127,19 @@ enum RuntimeCmd {
         #[arg(long)]
         keep_current: bool,
     },
+    /// Download the x86-64 Roblox build from the mirror upstream Cordial uses,
+    /// check it against Roblox's signing certificate and install it
+    Fetch {
+        /// A version name from `--list` (default: the newest the mirror has)
+        #[arg(long, value_name = "NAME")]
+        version: Option<String>,
+        /// Only list the versions the mirror offers
+        #[arg(long)]
+        list: bool,
+        /// Install it but keep the current build selected
+        #[arg(long)]
+        keep_current: bool,
+    },
     List,
     /// Choose the build new clients start with (running ones keep theirs)
     Use {

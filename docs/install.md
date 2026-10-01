@@ -42,7 +42,22 @@ cannot start until you do.
 
 ## 3. The Roblox build
 
-The manager never downloads Roblox. Get the Android build yourself (base APK, and
+The easy way, on the server itself:
+
+```
+cordialctl runtime fetch --list      # versions the mirror has for x86-64
+cordialctl runtime fetch             # newest; or --version NAME
+cordialctl runtime list
+```
+
+This runs upstream Cordial's own downloader (mirror: APKPure, x86-64 only), checks
+every file against Roblox's pinned signing certificate, then installs it with the
+same checks as `import`. Nothing is installed unless all of it passes. The
+download runs as you, not as the daemon, into a private temporary directory that
+is removed afterwards. It needs the server to reach the Internet; **unverified
+here**: the sandbox this was written in cannot reach the mirror.
+
+Or get the Android build yourself (base APK, and
 for a split build the engine split for your CPU):
 
 ```

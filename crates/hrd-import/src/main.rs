@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use hrd_core::time::now_unix;
-use hrd_core::{Error, Result};
+use hrd_core::{fsutil, Error, Result};
 use hrd_import::import::{self, Input, PinnedVerifier, Request};
 use hrd_import::store::Store;
 
@@ -22,6 +22,12 @@ usage:
   cordial-import use    --store DIR VERSION
   cordial-import remove --store DIR VERSION [--in-use VERSION]...
   cordial-import verify --store DIR [VERSION] [--json]
+  cordial-import fetch  --into DIR [--version NAME] [--list]
+
+`fetch` downloads the x86-64 Roblox build from the mirror upstream Cordial uses
+(APKPure) into DIR and checks each file against Roblox's pinned signing
+certificate; it installs nothing (run `import` on DIR afterwards). `--list`
+prints the versions the mirror offers. Needs a network connection.
 
 Imports verify the signature against the certificate pinned in upstream
 Cordial, check that the certificate contains the signing key, and refuse
@@ -39,6 +45,9 @@ struct Args {
     trust: Vec<String>,
     json: bool,
     in_use: Vec<String>,
+    into: Option<PathBuf>,
+    version: Option<String>,
+    list: bool,
     positional: Vec<String>,
 }
 
@@ -55,6 +64,9 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
         trust: vec![],
         json: false,
         in_use: vec![],
+        into: None,
+        version: None,
+        list: false,
         positional: vec![],
     };
     while let Some(arg) = it.next() {
@@ -86,6 +98,9 @@ fn parse(argv: Vec<String>) -> std::result::Result<Args, String> {
                 a.trust.push(v);
             }
             "--json" => a.json = true,
+            "--into" => a.into = Some(PathBuf::from(value("--into")?)),
+            "--version" => a.version = Some(value("--version")?),
+            "--list" => a.list = true,
             "--in-use" => a.in_use.push(value("--in-use")?),
             "-h" | "--help" => return Err(String::new()),
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -157,7 +172,85 @@ fn expand_inputs(a: &Args) -> Result<Vec<Input>> {
     Ok(out)
 }
 
+fn fetch(a: &Args) -> Result<()> {
+    use cordial_update::provider::{self, mirror, Cancel, Progress, Provider, Want};
+    let unreachable = |e: cordial_update::Unreachable| Error::unavailable(e.to_string());
+    if a.list {
+        for v in mirror::offered().map_err(unreachable)? {
+            println!("{}", v.name);
+        }
+        return Ok(());
+    }
+    let into = a
+        .into
+        .clone()
+        .ok_or_else(|| Error::invalid("fetch needs --into DIR"))?;
+    fsutil::ensure_private_dir(&into, 0o700)?;
+    let cancel = Cancel::new();
+    let mut last = String::new();
+    let mut show = |p: Progress| {
+        let line = match p {
+            Progress::Asking { provider } => format!("asking {provider}"),
+            Progress::Fetching { file, done, total } => match total {
+                Some(t) => format!("downloading {file}: {} of {} MiB", done >> 20, t >> 20),
+                None => format!("downloading {file}: {} MiB", done >> 20),
+            },
+            Progress::Verifying { file } => format!("checking Roblox's signature on {file}"),
+        };
+        // One line per state or per 25 MiB, not per chunk.
+        let key = line.split(':').next().unwrap_or("").to_string();
+        if key != last || line.contains("00 of") {
+            eprintln!("progress: {line}");
+            last = key;
+        }
+    };
+    let (archives, name) = match &a.version {
+        None => {
+            let got = provider::obtain(Some("apkpure"), Want::Newest, &cancel, &into, &mut show)
+                .map_err(unreachable)?;
+            (got.archives, got.version.name)
+        }
+        Some(want) => {
+            let offered = mirror::offered().map_err(unreachable)?;
+            let v = offered.iter().find(|v| &v.name == want).ok_or_else(|| {
+                Error::not_found(format!(
+                    "the mirror does not list {want} for x86-64; it lists: {}",
+                    offered
+                        .iter()
+                        .take(12)
+                        .map(|v| v.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            let archives = mirror::ApkPure
+                .fetch(v, &cancel, &into, &mut show)
+                .map_err(unreachable)?;
+            // `obtain` verifies for us; a chosen version is verified here, and
+            // again by `import`, against the same pinned certificates.
+            let pinned = cordial_update::apk_signature::pinned();
+            for f in archives.distinct() {
+                cordial_update::apk_signature::verify_signed_by(f, &pinned).map_err(|e| {
+                    Error::invalid(format!(
+                        "{} is not signed by Roblox's pinned certificate: {e}",
+                        f.display()
+                    ))
+                })?;
+            }
+            (archives, v.name.clone())
+        }
+    };
+    println!("fetched Roblox {name}");
+    for f in archives.distinct() {
+        println!("{}", f.display());
+    }
+    Ok(())
+}
+
 fn run(a: Args) -> Result<()> {
+    if a.cmd == "fetch" {
+        return fetch(&a);
+    }
     let store = Store::new(
         a.store
             .clone()
